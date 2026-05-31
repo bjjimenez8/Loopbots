@@ -1,0 +1,52 @@
+exchange:
+  id: binance
+  enable_rate_limit: true
+  sandbox: false
+  timeframe: 15m
+  candle_limit: 120
+
+telegram:
+  bot_token: "PUT_TELEGRAM_BOT_TOKEN_HERE"
+  chat_id: "PUT_TELEGRAM_CHAT_ID_HERE"
+
+scheduler:
+  interval_minutes: 15
+  timezone: America/Los_Angeles
+
+pairs:
+  - BTC/USDT
+  - ETH/USDT
+  - SOL/USDT
+  - DOGE/USDT
+  - LINK/USDT
+  - AVAX/USDT
+  - SUI/USDT
+
+strategy:
+  ema_fast: 9
+  ema_slow: 21
+  ema_trend: 50
+  rsi_period: 14
+  atr_period: 14
+  min_rsi: 42
+  max_rsi: 68
+  pullback_lookback: 6
+  pullback_min_pct: 0.002
+  pullback_max_pct: 0.035
+  bounce_confirmation_pct: 0.0015
+  volume_sma_period: 20
+  min_volume_ratio: 0.85
+  take_profit_atr_multiple: 1.4
+  safety_exit_atr_multiple: 0.9
+  max_active_minutes: 180
+
+loop_settings:
+  suggested_profit_pct: 0.006
+  suggested_safety_exit_pct: 0.004
+  max_loop_count: 3
+  quote_amount_usdt: 100
+
+storage:
+  active_trades_file: data/active_trades.json
+  trade_history_file: data/trade_history.csv
+  log_file: logs/loopbots.log
