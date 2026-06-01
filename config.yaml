@@ -13,6 +13,15 @@ scheduler:
   interval_minutes: 15
   timezone: America/Los_Angeles
 
+morning_brief:
+  enabled: true
+  hour: 8
+  minute: 0
+  timezone: America/Los_Angeles
+  headline_count: 3
+  state_file: data/morning_brief_state.json
+  headline_feed_url: https://www.coindesk.com/arc/outboundfeeds/rss/
+
 pairs:
   - BTC/USDT
   - ETH/USDT
