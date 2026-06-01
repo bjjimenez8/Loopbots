@@ -1,8 +1,8 @@
 # Loopbots
 
-Loopbots is a Telegram alert bot for short-term crypto loop strategies. It scans configured USDT pairs every 15 minutes, looks for LOOP-ready uptrends, shallow pullbacks, and bounce confirmations, then sends only actionable alerts.
+Loopbots is a Telegram alert bot for short-term crypto loop strategies. It scans configured USDT pairs every 15 minutes, looks for short-term uptrends, small pullbacks, and bounce opportunities, then sends only actionable alerts:
 
-- `ENTER` alerts when a setup is ready.
+- `ENTER` alerts when a setup appears.
 - `EXIT` alerts when the safety exit is triggered.
 
 It does not send "no trade" messages.
@@ -21,8 +21,6 @@ Loopbots/
   telegram_alerts.py
   trade_manager.py
   backtester.py
-  run_backtest.py
-  news_brief.py
   config.yaml
   requirements.txt
   README.md
@@ -59,51 +57,21 @@ It also sends a small morning crypto brief every day at `8:00 AM` Pacific with a
 
 ## Alert Format
 
-Entry alerts look like this:
+Entry alerts include:
 
-```text
-🚨 LOOP BOT ENTRY
-Coin: ETH/USDT
-Preset: Mid-term
-Bitsgap Default: 10 orders / 1.5% spacing
-Action: Start loop bot / enter trade
-Entry: 3842.15
-Stop Loss / Safety Exit: 3798.42
-Get Out / Take Profit: 3909.76
-Reason: Trend up, shallow pullback, bounce confirmed
-```
+- Coin
+- Preset (`Short-term` or `Mid-term`)
+- Entry price
+- Safety exit price
+- Take profit price
+- Short reason
 
-Exit alerts look like this:
+Exit alerts include:
 
-```text
-⚠️ LOOP BOT EXIT
-Coin: ETH/USDT
-Action: Stop loop bot / get out
-Current Price: 3798.12
-Stop Loss Hit: 3798.42
-Reason: Safety exit touched
-```
-
-A morning brief looks like this:
-
-```text
-Good morning.
-
-Morning Crypto Brief
-Mood: mostly green and steady.
-
-Market check:
-- BTC/USDT: 108245.0000 (+1.24% 24h)
-- ETH/USDT: 3892.4400 (+0.85% 24h)
-- SOL/USDT: 176.2100 (+2.12% 24h)
-
-Headlines:
-1. Example headline
-2. Example headline
-3. Example headline
-
-Take it easy and wait for clean setups.
-```
+- Coin
+- Current price
+- Safety exit level
+- Reason
 
 ## Storage
 
@@ -111,52 +79,50 @@ Loopbots stores state locally:
 
 - Active trades: `data/active_trades.json`
 - Trade history: `data/trade_history.csv`
-- Morning brief state: `data/morning_brief_state.json`
 - Logs: `logs/loopbots.log`
 
 The bot opens one active alert per pair at a time. A pair will not send another `ENTER` alert until its active trade exits.
 
-When take profit is reached, the trade is closed silently in history so the pair can produce future `ENTER` alerts. When the safety exit is reached, the bot sends one `EXIT` alert and marks that pair inactive.
+When take profit is reached, the trade is closed silently in history so the pair can produce future `ENTER` alerts. When the safety exit is reached, the bot sends an `EXIT` alert.
 
 ## Strategy Summary
 
-The live strategy is a strict short-term LOOP-ready filter:
+The default strategy looks for:
 
-- Uptrend: fast EMA above slow EMA above trend EMA.
-- Pullback: price dips slightly from a recent high, not a breakdown.
-- Bounce: price starts reclaiming after the pullback.
-- Quality filters: RSI and volume must still support continuation.
-- LOOP readiness: the range must support a valid order count, order distance, fee buffer, and reward-to-risk profile.
-- Pair-aware tuning: BTC and ETH get a mild relaxation because they move differently from the faster alt pairs.
+- Fast EMA above slow EMA above trend EMA.
+- Price reclaiming the fast EMA.
+- A recent pullback within configured bounds.
+- A small bounce from the recent low.
+- RSI in a short-term momentum range.
+- Volume near or above its short-term average.
 
-These settings are adjustable in `config.yaml`, while `run_backtest.py` also supports separate `short` and `mid` research presets without changing the live config.
+The live scanner can evaluate more than one strategy mode. With the default setup in `config.yaml`, it tries:
+
+- `Short-term` first for tighter LOOP opportunities
+- `Mid-term` second for steadier continuation setups
+
+Whichever preset actually passes is the one shown in the Telegram alert.
 
 ## Backtesting
 
-`backtester.py` supports CSV-based simulation, and `run_backtest.py` adds reusable public-market backtests with:
+`backtester.py` is prepared for future backtesting with CSV candle data. CSV files should include:
 
-- a live exchange universe
-- an optional separate history exchange
-- short vs mid preset comparison
-- cached candle downloads in `data/backtests/`
-- fixed-size portfolio balance simulation
+```text
+timestamp,open,high,low,close,volume
+```
 
-Example using Kraken as the real exchange universe and OKX only for deeper history:
+The backtester currently simulates entries, take-profit exits, and safety exits using the same strategy module as the live scanner.
+
+For exchange-based history testing, `run_backtest.py` supports splitting the live universe from the history source. That means you can keep `Kraken` as the real trading exchange while using deeper public candles from another exchange such as `OKX`:
 
 ```bash
-python run_backtest.py --exchange kraken --history-exchange okx --days 60 --fee-pct 0.2 --preset mid --starting-balance 10000 --trade-size 1000
+python run_backtest.py --exchange kraken --history-exchange okx --preset mid --days 60
 ```
 
 In that mode:
 
 - `--exchange` controls which symbols must exist on your real trading exchange.
 - `--history-exchange` controls where the historical candles come from.
-
-CSV candle files should use:
-
-```text
-timestamp,open,high,low,close,volume
-```
 
 ## Important Notes
 
