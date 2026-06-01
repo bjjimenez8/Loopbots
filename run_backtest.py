@@ -47,6 +47,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "max_active_minutes": 180,
     },
     "loop_settings": {
+        "preset_name": "Short-term",
+        "order_distance_pct": 1.0,
+        "order_count": 10,
+        "assumed_round_trip_fee_pct": 0.2,
         "suggested_profit_pct": 0.006,
         "suggested_safety_exit_pct": 0.004,
         "max_loop_count": 3,
@@ -55,31 +59,25 @@ DEFAULT_CONFIG: dict[str, Any] = {
 }
 
 PRESET_OVERRIDES: dict[str, dict[str, Any]] = {
-    "short": {},
-    "mid": {
-        "strategy": {
-            "ema_fast": 12,
-            "ema_slow": 26,
-            "ema_trend": 100,
-            "rsi_period": 14,
-            "atr_period": 14,
-            "min_rsi": 45,
-            "max_rsi": 72,
-            "pullback_lookback": 10,
-            "pullback_min_pct": 0.004,
-            "pullback_max_pct": 0.055,
-            "bounce_confirmation_pct": 0.0012,
-            "volume_sma_period": 20,
-            "min_volume_ratio": 0.8,
-            "take_profit_atr_multiple": 1.9,
-            "safety_exit_atr_multiple": 1.1,
-            "max_active_minutes": 720,
-        },
+    "short": {
         "loop_settings": {
-            "suggested_profit_pct": 0.01,
-            "suggested_safety_exit_pct": 0.006,
-            "max_loop_count": 2,
-            "quote_amount_usdt": 100,
+            "preset_name": "Short-term",
+            "order_distance_pct": 1.0,
+            "order_count": 10,
+        },
+    },
+    "mid": {
+        "loop_settings": {
+            "preset_name": "Mid-term",
+            "order_distance_pct": 1.5,
+            "order_count": 10,
+        },
+    },
+    "long": {
+        "loop_settings": {
+            "preset_name": "Long-term",
+            "order_distance_pct": 3.0,
+            "order_count": 10,
         },
     },
 }
