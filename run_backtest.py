@@ -14,7 +14,7 @@ from strategy import LoopStrategy
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "exchange": {
-        "id": "binance",
+        "id": "kraken",
         "enable_rate_limit": True,
         "sandbox": False,
         "timeframe": "15m",
@@ -24,7 +24,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "ETH/USDT",
         "DOGE/USDT",
         "LINK/USDT",
-        "SUI/USDT",
+        "SOL/USDT",
     ],
     "strategy": {
         "ema_fast": 9,
@@ -181,18 +181,24 @@ def run_backtest(
     cache_dir: Path | None = None,
     starting_balance: float = 10000.0,
     trade_size: float | None = None,
+    history_exchange_id: str | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     config = apply_preset(load_public_config(), preset)
     config["exchange"]["id"] = exchange_id
 
-    exchange_class = getattr(ccxt, exchange_id)
-    exchange = exchange_class({"enableRateLimit": config["exchange"]["enable_rate_limit"]})
-    exchange.load_markets()
+    live_exchange_class = getattr(ccxt, exchange_id)
+    live_exchange = live_exchange_class({"enableRateLimit": config["exchange"]["enable_rate_limit"]})
+    live_exchange.load_markets()
+    history_exchange_name = history_exchange_id or exchange_id
+    history_exchange_class = getattr(ccxt, history_exchange_name)
+    history_exchange = history_exchange_class({"enableRateLimit": config["exchange"]["enable_rate_limit"]})
+    history_exchange.load_markets()
     strategy = LoopStrategy(config["strategy"], config["loop_settings"])
     fixed_trade_size = float(trade_size if trade_size is not None else config["loop_settings"]["quote_amount_usdt"])
 
     summary = {
         "exchange": exchange_id,
+        "history_exchange": history_exchange_name,
         "preset": preset,
         "days": days,
         "fee_pct": fee_pct,
@@ -208,11 +214,14 @@ def run_backtest(
     candles_by_symbol: dict[str, pd.DataFrame] = {}
 
     for symbol in config["pairs"]:
-        if symbol not in exchange.markets:
+        if symbol not in live_exchange.markets:
             results.append({"symbol": symbol, "status": "missing"})
             continue
+        if symbol not in history_exchange.markets:
+            results.append({"symbol": symbol, "status": "missing_history"})
+            continue
 
-        candles = fetch_candles(exchange, symbol, config["exchange"]["timeframe"], days, cache_dir=cache_dir)
+        candles = fetch_candles(history_exchange, symbol, config["exchange"]["timeframe"], days, cache_dir=cache_dir)
         candles_by_symbol[symbol] = candles
         active_trade: dict[str, Any] | None = None
         wins = 0
@@ -347,7 +356,8 @@ def simulate_portfolio(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run a LOOP bot backtest report.")
-    parser.add_argument("--exchange", default="okx", help="Public exchange id to use for historical candles.")
+    parser.add_argument("--exchange", default="kraken", help="Live exchange universe to validate symbols against.")
+    parser.add_argument("--history-exchange", default=None, help="Optional history source exchange id for deeper candle data.")
     parser.add_argument("--days", type=int, default=60, help="Number of days of 15m candles to backtest.")
     parser.add_argument("--fee-pct", type=float, default=0.2, help="Round-trip fee assumption in percent.")
     parser.add_argument("--preset", default="short", choices=sorted(PRESET_OVERRIDES.keys()), help="Strategy preset to test.")
@@ -364,6 +374,7 @@ def main() -> None:
         cache_dir=Path(args.cache_dir),
         starting_balance=args.starting_balance,
         trade_size=args.trade_size,
+        history_exchange_id=args.history_exchange,
     )
     print("SUMMARY")
     for key, value in summary.items():
