@@ -21,17 +21,14 @@ class TelegramAlertClient:
         if signal.signal_type != "ENTER":
             return
 
-        settings = signal.loop_settings or {}
         message = (
-            "ENTER ALERT\n"
+            "🚨 LOOP BOT ENTRY\n"
             f"Coin: {signal.symbol}\n"
-            f"Take profit price: {signal.take_profit_price}\n"
-            f"Safety exit price: {signal.safety_exit_price}\n"
-            "Suggested short-term loop settings:\n"
-            f"- Profit target: {settings.get('suggested_profit_pct', 0) * 100:.2f}%\n"
-            f"- Safety exit: {settings.get('suggested_safety_exit_pct', 0) * 100:.2f}%\n"
-            f"- Max loops: {settings.get('max_loop_count')}\n"
-            f"- Quote amount: {settings.get('quote_amount_usdt')} USDT"
+            "Action: Start loop bot / enter trade\n"
+            f"Entry: {signal.price}\n"
+            f"Stop Loss / Safety Exit: {signal.safety_exit_price}\n"
+            f"Get Out / Take Profit: {signal.take_profit_price}\n"
+            f"Reason: {signal.reason}"
         )
         await self._send(message)
 
@@ -40,10 +37,12 @@ class TelegramAlertClient:
             return
 
         message = (
-            "EXIT ALERT\n"
+            "⚠️ LOOP BOT EXIT\n"
             f"Coin: {signal.symbol}\n"
-            "Safety exit triggered\n"
-            "Stop loop bot"
+            "Action: Stop loop bot / get out\n"
+            f"Current Price: {signal.price}\n"
+            f"Stop Loss Hit: {signal.safety_exit_price}\n"
+            "Reason: Safety exit touched"
         )
         await self._send(message)
 
