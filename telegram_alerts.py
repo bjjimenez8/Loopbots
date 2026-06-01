@@ -21,11 +21,16 @@ class TelegramAlertClient:
         if signal.signal_type != "ENTER":
             return
 
+        loop_plan = (signal.loop_settings or {}).get("loop_plan", {})
         message = (
             "🚨 LOOP BOT ENTRY\n"
             f"Coin: {signal.symbol}\n"
             "Action: Start loop bot / enter trade\n"
             f"Entry: {signal.price}\n"
+            f"Low Grid: {loop_plan.get('low_price', 'n/a')}\n"
+            f"High Grid: {loop_plan.get('high_price', 'n/a')}\n"
+            f"Order Distance: {loop_plan.get('order_distance_pct', 'n/a')}%\n"
+            f"Order Count: {loop_plan.get('order_count', 'n/a')}\n"
             f"Stop Loss / Safety Exit: {signal.safety_exit_price}\n"
             f"Get Out / Take Profit: {signal.take_profit_price}\n"
             f"Reason: {signal.reason}"
