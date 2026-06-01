@@ -94,8 +94,9 @@ class LoopbotsApp:
 
                 entry_signal = self.strategy.analyze_entry(symbol, candles)
                 if entry_signal.signal_type == "ENTER":
-                    self.trade_manager.open_trade(entry_signal)
-                    await self.telegram.send_enter_alert(entry_signal)
+                    opened_trade = self.trade_manager.open_trade(entry_signal)
+                    if opened_trade:
+                        await self.telegram.send_enter_alert(entry_signal)
             except Exception:
                 logging.exception("Failed to scan %s", symbol)
 
