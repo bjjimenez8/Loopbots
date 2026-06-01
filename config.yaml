@@ -91,6 +91,30 @@ strategy:
   safety_exit_atr_multiple: 0.9
   max_active_minutes: 180
 
+strategy_modes:
+  - name: short
+    strategy_overrides:
+      pullback_lookback: 5
+      pullback_max_pct: 0.028
+      bounce_confirmation_pct: 0.0012
+      min_volume_ratio: 0.8
+      max_active_minutes: 240
+    loop_settings:
+      preset_name: Short-term
+      order_distance_pct: 1.0
+      order_count: 10
+  - name: mid
+    strategy_overrides:
+      pullback_lookback: 6
+      pullback_max_pct: 0.035
+      bounce_confirmation_pct: 0.0015
+      min_volume_ratio: 0.85
+      max_active_minutes: 180
+    loop_settings:
+      preset_name: Mid-term
+      order_distance_pct: 1.5
+      order_count: 10
+
 loop_settings:
   preset_name: Mid-term
   order_distance_pct: 1.5
