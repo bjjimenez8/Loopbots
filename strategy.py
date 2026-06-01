@@ -133,12 +133,14 @@ class LoopStrategy:
             self.min_order_distance_pct,
             round(max((atr / price) * 100 * 0.65, self.assumed_round_trip_fee_pct * 2.0), 2),
         )
-        estimated_order_count = math.floor(raw_range_width_pct / order_distance_pct)
-        order_count = min(self.max_order_count, estimated_order_count)
-
-        if order_count < self.min_order_count:
+        min_required_order_count = max(
+            self.min_order_count,
+            math.ceil(raw_range_width_pct / order_distance_pct) + 2,
+        )
+        if min_required_order_count > self.max_order_count:
             return None
 
+        order_count = min_required_order_count
         precision = self._price_precision(price)
         safety_exit_price = round(range_low - (atr * 0.15), precision)
         high_price = round(range_high, precision)
@@ -151,6 +153,7 @@ class LoopStrategy:
             "safety_exit_price": safety_exit_price,
             "order_distance_pct": order_distance_pct,
             "order_count": order_count,
+            "min_required_order_count": min_required_order_count,
             "range_width_pct": round(raw_range_width_pct, 2),
             "fee_buffer_pct": round(order_distance_pct - self.assumed_round_trip_fee_pct, 2),
             "reward_to_risk": round(reward_to_risk, 2),
@@ -162,14 +165,17 @@ class LoopStrategy:
         safety_exit_price = float(loop_plan["safety_exit_price"])
         order_distance_pct = float(loop_plan["order_distance_pct"])
         order_count = int(loop_plan["order_count"])
+        min_required_order_count = int(loop_plan["min_required_order_count"])
         range_width_pct = float(loop_plan["range_width_pct"])
         reward_to_risk = float(loop_plan["reward_to_risk"])
 
         if not (self.min_order_count <= order_count <= self.max_order_count):
             return False
+        if order_count < min_required_order_count:
+            return False
         if order_distance_pct < self.min_order_distance_pct:
             return False
-        if range_width_pct < order_distance_pct * max(self.min_order_count - 1, 1):
+        if range_width_pct < order_distance_pct * max(order_count - 2, 1):
             return False
         if (order_distance_pct - self.assumed_round_trip_fee_pct) < profile["fee_edge_buffer"]:
             return False
