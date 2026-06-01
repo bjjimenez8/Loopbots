@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 import logging
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import yaml
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from market_data import MarketDataClient, MarketDataConfig
+from news_brief import MorningBriefConfig, MorningBriefService
 from strategy import LoopStrategy, Signal
 from telegram_alerts import TelegramAlertClient
 from trade_manager import TradeManager
@@ -59,6 +63,23 @@ class LoopbotsApp:
             chat_id=config["telegram"]["chat_id"],
         )
         self.pairs = config["pairs"]
+        morning_config = config.get("morning_brief", {})
+        self.morning_brief = MorningBriefService(
+            exchange=self.market_data.exchange,
+            pairs=self.pairs,
+            config=MorningBriefConfig(
+                enabled=morning_config.get("enabled", True),
+                hour=morning_config.get("hour", 8),
+                minute=morning_config.get("minute", 0),
+                timezone=morning_config.get("timezone", config["scheduler"]["timezone"]),
+                headline_count=morning_config.get("headline_count", 3),
+                state_file=str(PROJECT_ROOT / morning_config.get("state_file", "data/morning_brief_state.json")),
+                headline_feed_url=morning_config.get(
+                    "headline_feed_url",
+                    "https://www.coindesk.com/arc/outboundfeeds/rss/",
+                ),
+            ),
+        )
 
     async def scan_once(self) -> None:
         logging.info("Starting scan for %d pairs", len(self.pairs))
@@ -102,6 +123,23 @@ class LoopbotsApp:
 
         logging.info("Scan complete")
 
+    async def send_morning_brief(self) -> None:
+        if not self.morning_brief.config.enabled:
+            return
+
+        local_now = datetime.now(ZoneInfo(self.morning_brief.config.timezone))
+        local_date = local_now.date().isoformat()
+        if not self.morning_brief.should_send_today(local_date):
+            return
+
+        try:
+            message = self.morning_brief.build_brief()
+            await self.telegram.send_morning_brief(message)
+            self.morning_brief.mark_sent(local_date)
+            logging.info("Morning brief sent for %s", local_date)
+        except Exception:
+            logging.exception("Failed to send morning brief")
+
 
 async def main() -> None:
     config = load_config()
@@ -113,6 +151,18 @@ async def main() -> None:
         app.scan_once,
         trigger=IntervalTrigger(minutes=config["scheduler"]["interval_minutes"]),
         id="loopbots_scan",
+        max_instances=1,
+        coalesce=True,
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        app.send_morning_brief,
+        trigger=CronTrigger(
+            hour=app.morning_brief.config.hour,
+            minute=app.morning_brief.config.minute,
+            timezone=app.morning_brief.config.timezone,
+        ),
+        id="loopbots_morning_brief",
         max_instances=1,
         coalesce=True,
         replace_existing=True,
