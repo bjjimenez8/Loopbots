@@ -16,6 +16,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from market_regime import mode_allowed
 from market_data import MarketDataClient, MarketDataConfig
 from news_brief import MorningBriefConfig, MorningBriefService
+from paper_tracker import PaperTracker, PaperTrackingConfig
 from strategy import LoopStrategy, Signal
 from telegram_alerts import TelegramAlertClient
 from trade_manager import TradeManager
@@ -85,6 +86,21 @@ class LoopbotsApp:
                 ),
             ),
         )
+        paper_config = config.get("paper_tracking", {})
+        self.paper_tracker = PaperTracker(
+            active_trades_file=str(PROJECT_ROOT / config["storage"]["active_trades_file"]),
+            trade_history_file=str(PROJECT_ROOT / config["storage"]["trade_history_file"]),
+            config=PaperTrackingConfig(
+                enabled=paper_config.get("enabled", True),
+                hour=paper_config.get("hour", 20),
+                minute=paper_config.get("minute", 0),
+                timezone=paper_config.get("timezone", config["scheduler"]["timezone"]),
+                lookback_days=paper_config.get("lookback_days", 7),
+                retention_days=paper_config.get("retention_days", 90),
+                state_file=str(PROJECT_ROOT / paper_config.get("state_file", "data/paper_summary_state.json")),
+                fee_pct=float(config.get("loop_settings", {}).get("assumed_round_trip_fee_pct", 0.2)),
+            ),
+        )
 
     async def scan_once(self) -> None:
         self.refresh_pairs()
@@ -128,6 +144,7 @@ class LoopbotsApp:
                 logging.exception("Failed to scan %s", symbol)
 
         logging.info("Scan complete")
+        self._prune_paper_history()
 
     def refresh_pairs(self) -> None:
         if not self.discovery_config.get("enabled", False):
@@ -157,6 +174,31 @@ class LoopbotsApp:
             logging.info("Morning brief sent for %s", local_date)
         except Exception:
             logging.exception("Failed to send morning brief")
+
+    async def send_paper_summary(self) -> None:
+        if not self.paper_tracker.config.enabled:
+            return
+
+        local_now = datetime.now(ZoneInfo(self.paper_tracker.config.timezone))
+        local_date = local_now.date().isoformat()
+        if not self.paper_tracker.should_send_today(local_date):
+            return
+
+        try:
+            self._prune_paper_history()
+            message = self.paper_tracker.build_summary()
+            await self.telegram.send_paper_summary(message)
+            self.paper_tracker.mark_sent(local_date)
+            logging.info("Paper summary sent for %s", local_date)
+        except Exception:
+            logging.exception("Failed to send paper summary")
+
+    def _prune_paper_history(self) -> None:
+        if not self.paper_tracker.config.enabled:
+            return
+        removed_count = self.trade_manager.prune_history(self.paper_tracker.config.retention_days)
+        if removed_count:
+            logging.info("Pruned %d old paper history rows", removed_count)
 
     def _analyze_entry(self, symbol: str, candles: Any) -> Signal:
         for strategy_mode in self.strategies:
@@ -250,6 +292,18 @@ async def main() -> None:
             timezone=app.morning_brief.config.timezone,
         ),
         id="loopbots_morning_brief",
+        max_instances=1,
+        coalesce=True,
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        app.send_paper_summary,
+        trigger=CronTrigger(
+            hour=app.paper_tracker.config.hour,
+            minute=app.paper_tracker.config.minute,
+            timezone=app.paper_tracker.config.timezone,
+        ),
+        id="loopbots_paper_summary",
         max_instances=1,
         coalesce=True,
         replace_existing=True,

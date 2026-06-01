@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -67,6 +67,33 @@ class TradeManager:
         self._append_history(closed_trade)
         return closed_trade
 
+    def prune_history(self, retention_days: int) -> int:
+        if retention_days <= 0 or not self.trade_history_path.exists():
+            return 0
+
+        cutoff = datetime.now(UTC) - timedelta(days=retention_days)
+        active_symbols = set(self.load_active_trades())
+        with self.trade_history_path.open("r", newline="", encoding="utf-8") as file:
+            rows = list(csv.DictReader(file))
+
+        kept_rows = []
+        for row in rows:
+            if row.get("event") == "ENTER" and row.get("symbol") in active_symbols:
+                kept_rows.append(row)
+                continue
+
+            event_time = self._parse_time(row.get("event_at", "") or row.get("opened_at", ""))
+            if event_time is None or event_time >= cutoff:
+                kept_rows.append(row)
+
+        removed_count = len(rows) - len(kept_rows)
+        if removed_count:
+            with self.trade_history_path.open("w", newline="", encoding="utf-8") as file:
+                writer = csv.DictWriter(file, fieldnames=self._history_fields)
+                writer.writeheader()
+                writer.writerows({field: row.get(field, "") for field in self._history_fields} for row in kept_rows)
+        return removed_count
+
     def _ensure_files(self) -> None:
         if not self.active_trades_path.exists():
             self.active_trades_path.write_text("{}", encoding="utf-8")
@@ -109,3 +136,15 @@ class TradeManager:
     @staticmethod
     def _now() -> str:
         return datetime.now(UTC).isoformat()
+
+    @staticmethod
+    def _parse_time(value: str) -> datetime | None:
+        if not value:
+            return None
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=UTC)
+        return parsed.astimezone(UTC)

@@ -5,3 +5,4 @@ __pycache__/
 logs/*.log
 data/backtests/
 data/morning_brief_state.json
+data/paper_summary_state.json

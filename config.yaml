@@ -66,6 +66,15 @@ morning_brief:
   state_file: data/morning_brief_state.json
   headline_feed_url: https://www.coindesk.com/arc/outboundfeeds/rss/
 
+paper_tracking:
+  enabled: true
+  hour: 20
+  minute: 0
+  timezone: America/Los_Angeles
+  lookback_days: 7
+  retention_days: 90
+  state_file: data/paper_summary_state.json
+
 pairs:
   - BTC/USDT
   - ETH/USDT
