@@ -22,10 +22,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "pairs": [
         "BTC/USDT",
         "ETH/USDT",
-        "SOL/USDT",
         "DOGE/USDT",
         "LINK/USDT",
-        "AVAX/USDT",
         "SUI/USDT",
     ],
     "strategy": {
@@ -47,8 +45,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "max_active_minutes": 180,
     },
     "loop_settings": {
-        "preset_name": "Short-term",
-        "order_distance_pct": 1.0,
+        "preset_name": "Mid-term",
+        "order_distance_pct": 1.5,
         "order_count": 10,
         "assumed_round_trip_fee_pct": 0.2,
         "suggested_profit_pct": 0.006,
