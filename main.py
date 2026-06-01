@@ -44,6 +44,7 @@ def setup_logging(log_file: str) -> None:
 class LoopbotsApp:
     def __init__(self, config: dict[str, Any]) -> None:
         exchange_config = config["exchange"]
+        self.discovery_config = config.get("pair_discovery", {})
         self.market_data = MarketDataClient(
             MarketDataConfig(
                 exchange_id=exchange_config["id"],
@@ -51,6 +52,7 @@ class LoopbotsApp:
                 sandbox=exchange_config["sandbox"],
                 timeframe=exchange_config["timeframe"],
                 candle_limit=exchange_config["candle_limit"],
+                discovery_refresh_minutes=self.discovery_config.get("refresh_minutes", 60),
             )
         )
         self.strategy = LoopStrategy(config["strategy"], config["loop_settings"])
@@ -62,7 +64,8 @@ class LoopbotsApp:
             bot_token=config["telegram"]["bot_token"],
             chat_id=config["telegram"]["chat_id"],
         )
-        self.pairs = config["pairs"]
+        self.fallback_pairs = list(config["pairs"])
+        self.pairs = list(self.fallback_pairs)
         morning_config = config.get("morning_brief", {})
         self.morning_brief = MorningBriefService(
             exchange=self.market_data.exchange,
@@ -82,6 +85,7 @@ class LoopbotsApp:
         )
 
     async def scan_once(self) -> None:
+        self.refresh_pairs()
         logging.info("Starting scan for %d pairs", len(self.pairs))
         for symbol in self.pairs:
             try:
@@ -122,6 +126,18 @@ class LoopbotsApp:
                 logging.exception("Failed to scan %s", symbol)
 
         logging.info("Scan complete")
+
+    def refresh_pairs(self) -> None:
+        if not self.discovery_config.get("enabled", False):
+            self.pairs = list(self.fallback_pairs)
+            return
+
+        try:
+            discovered_pairs = self.market_data.discover_pairs(self.discovery_config)
+            self.pairs = discovered_pairs or list(self.fallback_pairs)
+        except Exception:
+            logging.exception("Failed to refresh discovered pairs, falling back to configured list")
+            self.pairs = list(self.fallback_pairs)
 
     async def send_morning_brief(self) -> None:
         if not self.morning_brief.config.enabled:
