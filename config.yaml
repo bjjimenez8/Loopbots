@@ -1,5 +1,5 @@
 exchange:
-  id: binance
+  id: kraken
   enable_rate_limit: true
   sandbox: false
   timeframe: 15m
@@ -12,6 +12,37 @@ telegram:
 scheduler:
   interval_minutes: 15
   timezone: America/Los_Angeles
+
+pair_discovery:
+  enabled: true
+  refresh_minutes: 60
+  quote_asset: USDT
+  min_quote_volume_usdt: 2000000
+  min_last_price: 0.05
+  min_volatility_pct: 2.5
+  max_volatility_pct: 18.0
+  max_pairs: 10
+  preferred_base_assets:
+    - BTC
+    - ETH
+    - DOGE
+    - LINK
+    - SOL
+    - AVAX
+    - XRP
+    - ADA
+    - BERA
+  excluded_base_assets:
+    - USDT
+    - USDC
+    - DAI
+    - PYUSD
+    - EUR
+    - USD
+    - GBP
+    - AUD
+    - CAD
+    - JPY
 
 morning_brief:
   enabled: true
@@ -27,7 +58,7 @@ pairs:
   - ETH/USDT
   - DOGE/USDT
   - LINK/USDT
-  - SUI/USDT
+  - SOL/USDT
 
 strategy:
   ema_fast: 9
