@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
 from datetime import datetime
 import logging
 from pathlib import Path
@@ -55,7 +56,7 @@ class LoopbotsApp:
                 discovery_refresh_minutes=self.discovery_config.get("refresh_minutes", 60),
             )
         )
-        self.strategy = LoopStrategy(config["strategy"], config["loop_settings"])
+        self.strategies = self._build_strategies(config)
         self.trade_manager = TradeManager(
             active_trades_file=str(PROJECT_ROOT / config["storage"]["active_trades_file"]),
             trade_history_file=str(PROJECT_ROOT / config["storage"]["trade_history_file"]),
@@ -111,13 +112,13 @@ class LoopbotsApp:
                         )
                         continue
 
-                    exit_signal = self.strategy.analyze_exit(symbol, candles, active_trade)
+                    exit_signal = self.strategies[0].analyze_exit(symbol, candles, active_trade)
                     if exit_signal.signal_type == "EXIT":
                         self.trade_manager.close_trade(exit_signal, exit_signal.reason)
                         await self.telegram.send_exit_alert(exit_signal)
                     continue
 
-                entry_signal = self.strategy.analyze_entry(symbol, candles)
+                entry_signal = self._analyze_entry(symbol, candles)
                 if entry_signal.signal_type == "ENTER":
                     opened_trade = self.trade_manager.open_trade(entry_signal)
                     if opened_trade:
@@ -155,6 +156,59 @@ class LoopbotsApp:
             logging.info("Morning brief sent for %s", local_date)
         except Exception:
             logging.exception("Failed to send morning brief")
+
+    def _analyze_entry(self, symbol: str, candles: Any) -> Signal:
+        for strategy in self.strategies:
+            signal = strategy.analyze_entry(symbol, candles)
+            if signal.signal_type == "ENTER":
+                return signal
+        return Signal("HOLD", symbol=symbol, price=float(candles["close"].iloc[-1]), reason="no entry setup")
+
+    def _build_strategies(self, config: dict[str, Any]) -> list[LoopStrategy]:
+        strategy_modes = config.get("strategy_modes") or self._default_strategy_modes()
+        strategies: list[LoopStrategy] = []
+        for mode in strategy_modes:
+            strategy_config = deepcopy(config["strategy"])
+            strategy_config.update(mode.get("strategy_overrides", {}))
+            loop_settings = deepcopy(config["loop_settings"])
+            loop_settings.update(mode.get("loop_settings", {}))
+            strategies.append(LoopStrategy(strategy_config, loop_settings))
+        return strategies
+
+    @staticmethod
+    def _default_strategy_modes() -> list[dict[str, Any]]:
+        return [
+            {
+                "name": "short",
+                "strategy_overrides": {
+                    "pullback_lookback": 5,
+                    "pullback_max_pct": 0.028,
+                    "bounce_confirmation_pct": 0.0012,
+                    "min_volume_ratio": 0.8,
+                    "max_active_minutes": 240,
+                },
+                "loop_settings": {
+                    "preset_name": "Short-term",
+                    "order_distance_pct": 1.0,
+                    "order_count": 10,
+                },
+            },
+            {
+                "name": "mid",
+                "strategy_overrides": {
+                    "pullback_lookback": 6,
+                    "pullback_max_pct": 0.035,
+                    "bounce_confirmation_pct": 0.0015,
+                    "min_volume_ratio": 0.85,
+                    "max_active_minutes": 180,
+                },
+                "loop_settings": {
+                    "preset_name": "Mid-term",
+                    "order_distance_pct": 1.5,
+                    "order_count": 10,
+                },
+            },
+        ]
 
 
 async def main() -> None:
