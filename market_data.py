@@ -71,6 +71,18 @@ class MarketDataClient:
         max_pairs = int(discovery_config.get("max_pairs", 12))
         excluded_bases = {base.upper() for base in discovery_config.get("excluded_base_assets", [])}
         preferred_bases = [base.upper() for base in discovery_config.get("preferred_base_assets", [])]
+        strategy_watchlist_bases = {
+            base.upper() for base in discovery_config.get("strategy_watchlist_base_assets", [])
+        }
+        watchlist_min_quote_volume = float(
+            discovery_config.get("watchlist_min_quote_volume_usdt", min_quote_volume)
+        )
+        watchlist_min_volatility_pct = float(
+            discovery_config.get("watchlist_min_volatility_pct", min_volatility_pct)
+        )
+        watchlist_max_volatility_pct = float(
+            discovery_config.get("watchlist_max_volatility_pct", max_volatility_pct)
+        )
 
         candidates: list[dict[str, Any]] = []
         for symbol, market in self.exchange.markets.items():
@@ -96,8 +108,10 @@ class MarketDataClient:
             last_price = self._coalesce_number(ticker.get("last"), ticker.get("close"), 0.0)
             high_price = self._coalesce_number(ticker.get("high"), last_price, 0.0)
             low_price = self._coalesce_number(ticker.get("low"), last_price, 0.0)
+            is_watchlist = base_asset in strategy_watchlist_bases
+            min_required_quote_volume = watchlist_min_quote_volume if is_watchlist else min_quote_volume
 
-            if quote_volume < min_quote_volume:
+            if quote_volume < min_required_quote_volume:
                 continue
             if last_price < min_last_price:
                 continue
@@ -105,7 +119,9 @@ class MarketDataClient:
                 continue
 
             volatility_pct = ((high_price - low_price) / low_price) * 100 if low_price else 0.0
-            if volatility_pct < min_volatility_pct or volatility_pct > max_volatility_pct:
+            min_required_volatility = watchlist_min_volatility_pct if is_watchlist else min_volatility_pct
+            max_allowed_volatility = watchlist_max_volatility_pct if is_watchlist else max_volatility_pct
+            if volatility_pct < min_required_volatility or volatility_pct > max_allowed_volatility:
                 continue
 
             candidates.append(
@@ -115,11 +131,13 @@ class MarketDataClient:
                     "quote_volume": quote_volume,
                     "volatility_pct": volatility_pct,
                     "preferred": base_asset in preferred_bases,
+                    "watchlist": is_watchlist,
                 }
             )
 
         candidates.sort(
             key=lambda item: (
+                not item["watchlist"],
                 not item["preferred"],
                 -item["quote_volume"],
                 -item["volatility_pct"],
