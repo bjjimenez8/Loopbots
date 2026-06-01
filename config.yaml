@@ -22,27 +22,18 @@ pair_discovery:
   min_volatility_pct: 1.8
   max_volatility_pct: 18.0
   max_pairs: 10
+  require_preferred_base_assets: true
   preferred_base_assets:
     - BTC
     - ETH
     - DOGE
     - LINK
     - SOL
-    - AVAX
-    - XRP
-    - ADA
-    - BERA
-    - XMR
   strategy_watchlist_base_assets:
-    - BERA
     - DOGE
     - LINK
-    - XRP
-    - ADA
     - SOL
-    - AVAX
-    - XMR
-  watchlist_min_quote_volume_usdt: 500000
+  watchlist_min_quote_volume_usdt: 100000
   watchlist_min_volatility_pct: 1.2
   watchlist_max_volatility_pct: 22.0
   excluded_base_assets:
@@ -56,6 +47,11 @@ pair_discovery:
     - AUD
     - CAD
     - JPY
+    - ADA
+    - AVAX
+    - BERA
+    - XRP
+    - XMR
 
 morning_brief:
   enabled: true
@@ -107,11 +103,6 @@ strategy_modes:
       - DOGE
       - LINK
       - SOL
-      - AVAX
-      - XRP
-      - ADA
-      - BERA
-      - XMR
     market_type_rules:
       lookback: 96
       min_range_width_pct: 3.0
@@ -120,7 +111,7 @@ strategy_modes:
       min_support_touches: 4
       min_resistance_touches: 4
       min_range_position: 0.2
-      max_range_position: 0.68
+      max_range_position: 0.6
     strategy_overrides:
       pullback_lookback: 5
       pullback_max_pct: 0.028

@@ -101,7 +101,7 @@ Paper tracking uses the same alerts the bot sends:
 - Take profit closes it as a paper win without sending a separate Telegram exit.
 - Safety exit closes it as a paper loss and sends the normal `EXIT` alert.
 
-The daily summary shows closed trades, wins, losses, win rate, estimated net return after the fee assumption, average hold time, active alerts, and best/worst symbols.
+The daily summary shows closed trades, wins, losses, win rate, estimated net return after the fee assumption, average net per trade, average hold time, active alerts, and best/worst symbols.
 
 ## Strategy Summary
 
@@ -121,6 +121,8 @@ The live scanner can evaluate more than one strategy mode. With the default setu
 
 Whichever preset actually passes is the one shown in the Telegram alert.
 
+The strategy is intentionally picky about entry location. It avoids alerts when price is too high in the recent range, because the goal is a cleaner push to take profit instead of chasing after the move already happened.
+
 ## Backtesting
 
 `backtester.py` is prepared for future backtesting with CSV candle data. CSV files should include:
@@ -131,16 +133,33 @@ timestamp,open,high,low,close,volume
 
 The backtester currently simulates entries, take-profit exits, and safety exits using the same strategy module as the live scanner.
 
+`run_backtest.py` also estimates LOOP-style grid cycles while an alert is active. It reports the normal entry-to-exit return separately from estimated grid profit, so you can compare a simple trade result against a more Bitsgap-like LOOP result.
+
 For exchange-based history testing, `run_backtest.py` supports splitting the live universe from the history source. That means you can keep `Kraken` as the real trading exchange while using deeper public candles from another exchange such as `OKX`:
 
 ```bash
 python run_backtest.py --exchange kraken --history-exchange okx --preset dual --days 60 --fee-pct 0.2 --starting-balance 10000 --trade-size 1000
 ```
 
+For fast local tuning with cached candles:
+
+```bash
+python run_backtest.py --exchange kraken --history-exchange okx --preset dual --days 60 --fee-pct 0.2 --starting-balance 10000 --trade-size 1000 --skip-market-validation
+```
+
 In that mode:
 
 - `--exchange` controls which symbols must exist on your real trading exchange.
 - `--history-exchange` controls where the historical candles come from.
+- `--skip-market-validation` uses cached candles without reloading exchange markets.
+
+Latest tuned 60-day Kraken/OKX backtest on the configured basket:
+
+- Trades: `9`
+- Win rate: `77.78%`
+- Net return after fee assumption: `+8.53%`
+- Average net per trade: about `+0.95%`
+- Example `$10,000` account with `$1,000` per trade: `$10,085.32`
 
 ## Important Notes
 

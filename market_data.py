@@ -71,6 +71,7 @@ class MarketDataClient:
         max_pairs = int(discovery_config.get("max_pairs", 12))
         excluded_bases = {base.upper() for base in discovery_config.get("excluded_base_assets", [])}
         preferred_bases = [base.upper() for base in discovery_config.get("preferred_base_assets", [])]
+        require_preferred_bases = bool(discovery_config.get("require_preferred_base_assets", False))
         strategy_watchlist_bases = {
             base.upper() for base in discovery_config.get("strategy_watchlist_base_assets", [])
         }
@@ -97,6 +98,8 @@ class MarketDataClient:
             if base_asset in excluded_bases:
                 continue
             if not base_asset or base_asset.endswith(".S"):
+                continue
+            if require_preferred_bases and base_asset not in preferred_bases:
                 continue
 
             ticker = tickers.get(symbol) or {}

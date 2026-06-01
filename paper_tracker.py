@@ -67,6 +67,7 @@ class PaperTracker:
                 f"Losses: {window_stats['losses']} | WR: {window_stats['win_rate_pct']:.2f}%"
             ),
             f"Net after est. fees: {window_stats['net_return_pct']:+.2f}%",
+            f"Avg net/trade: {window_stats['avg_net_return_pct']:+.2f}%",
             f"Avg hold: {window_stats['avg_hold_hours']:.2f}h",
             f"Active alerts: {len(active_trades)}",
         ]
@@ -82,7 +83,8 @@ class PaperTracker:
                 "All-time paper:",
                 (
                     f"Closed: {all_stats['closed']} | WR: {all_stats['win_rate_pct']:.2f}% | "
-                    f"Net: {all_stats['net_return_pct']:+.2f}%"
+                    f"Net: {all_stats['net_return_pct']:+.2f}% | "
+                    f"Avg/trade: {all_stats['avg_net_return_pct']:+.2f}%"
                 ),
             ]
         )
@@ -133,6 +135,7 @@ class PaperTracker:
             "losses": losses,
             "win_rate_pct": win_rate_pct,
             "net_return_pct": sum(net_returns),
+            "avg_net_return_pct": (sum(net_returns) / closed) if closed else 0.0,
             "avg_hold_hours": (sum(hold_hours) / len(hold_hours)) if hold_hours else 0.0,
             "best_symbol": best_symbol,
             "best_symbol_return_pct": symbol_returns.get(best_symbol, 0.0),

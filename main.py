@@ -227,7 +227,7 @@ class LoopbotsApp:
             {
                 "name": "short",
                 "market_type": "sideways",
-                "allowed_base_assets": ["DOGE", "LINK", "SOL", "AVAX", "XRP", "ADA", "BERA", "XMR"],
+                "allowed_base_assets": ["DOGE", "LINK", "SOL"],
                 "market_type_rules": {
                     "lookback": 96,
                     "min_range_width_pct": 3.0,
@@ -236,7 +236,7 @@ class LoopbotsApp:
                     "min_support_touches": 4,
                     "min_resistance_touches": 4,
                     "min_range_position": 0.2,
-                    "max_range_position": 0.68,
+                    "max_range_position": 0.6,
                 },
                 "strategy_overrides": {
                     "pullback_lookback": 5,

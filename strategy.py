@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
 from typing import Literal
 
@@ -194,7 +193,7 @@ class LoopStrategy:
                 "volume_buffer": 0.1,
                 "fee_edge_buffer": 0.08,
                 "min_reward_to_risk": 0.9,
-                "max_range_position": 0.76,
+                "max_range_position": 0.6,
                 "min_range_multiple": 1.5,
                 "min_range_floor_pct": 1.2,
             }
@@ -209,7 +208,7 @@ class LoopStrategy:
             "volume_buffer": 0.0,
             "fee_edge_buffer": 0.1,
             "min_reward_to_risk": 0.95,
-            "max_range_position": 0.7,
+            "max_range_position": 0.6,
             "min_range_multiple": 1.7,
             "min_range_floor_pct": 1.5,
         }

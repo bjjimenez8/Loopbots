@@ -14,6 +14,9 @@ from market_regime import mode_allowed
 from strategy import LoopStrategy, Signal
 
 
+PreparedStrategy = tuple[dict[str, Any], LoopStrategy, pd.DataFrame, dict[int, int]]
+
+
 DEFAULT_CONFIG: dict[str, Any] = {
     "exchange": {
         "id": "kraken",
@@ -60,7 +63,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         {
             "name": "short",
             "market_type": "sideways",
-            "allowed_base_assets": ["DOGE", "LINK", "SOL", "AVAX", "XRP", "ADA", "BERA", "XMR"],
+            "allowed_base_assets": ["DOGE", "LINK", "SOL"],
             "market_type_rules": {
                 "lookback": 96,
                 "min_range_width_pct": 3.0,
@@ -69,7 +72,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
                 "min_support_touches": 4,
                 "min_resistance_touches": 4,
                 "min_range_position": 0.2,
-                "max_range_position": 0.68,
+                "max_range_position": 0.6,
             },
             "strategy_overrides": {
                 "pullback_lookback": 5,
@@ -128,9 +131,21 @@ PRESET_OVERRIDES: dict[str, dict[str, Any]] = {
     },
 }
 
+_EXCHANGE_CACHE: dict[tuple[str, bool], Any] = {}
+
 
 def _safe_symbol(symbol: str) -> str:
     return re.sub(r"[^A-Za-z0-9]+", "_", symbol).strip("_")
+
+
+def _exchange(exchange_id: str, enable_rate_limit: bool) -> Any:
+    cache_key = (exchange_id, enable_rate_limit)
+    if cache_key not in _EXCHANGE_CACHE:
+        exchange_class = getattr(ccxt, exchange_id)
+        exchange = exchange_class({"enableRateLimit": enable_rate_limit})
+        exchange.load_markets()
+        _EXCHANGE_CACHE[cache_key] = exchange
+    return _EXCHANGE_CACHE[cache_key]
 
 
 def load_public_config() -> dict[str, Any]:
@@ -174,23 +189,31 @@ def apply_preset(config: dict[str, Any], preset: str) -> dict[str, Any]:
 
 
 def fetch_candles(
-    exchange: Any,
+    exchange: Any | None,
     symbol: str,
     timeframe: str,
     days: int,
     limit: int = 300,
     cache_dir: Path | None = None,
+    exchange_id: str | None = None,
 ) -> pd.DataFrame:
+    resolved_exchange_id = exchange.id if exchange is not None else exchange_id
+    if not resolved_exchange_id:
+        raise ValueError("exchange_id is required when exchange is not provided")
+
     cache_path = None
     if cache_dir is not None:
         cache_dir.mkdir(parents=True, exist_ok=True)
-        cache_name = f"{exchange.id}_{_safe_symbol(symbol)}_{timeframe}_{days}d.csv"
+        cache_name = f"{resolved_exchange_id}_{_safe_symbol(symbol)}_{timeframe}_{days}d.csv"
         cache_path = cache_dir / cache_name
         if cache_path.exists():
             cached = pd.read_csv(cache_path)
             for column in ["open", "high", "low", "close", "volume"]:
                 cached[column] = pd.to_numeric(cached[column], errors="coerce")
             return cached.dropna().reset_index(drop=True)
+
+    if exchange is None:
+        exchange = _exchange(resolved_exchange_id, True)
 
     since_ms = int((datetime.now(UTC) - timedelta(days=days)).timestamp() * 1000)
     rows: list[list[Any]] = []
@@ -232,21 +255,28 @@ def run_backtest(
     starting_balance: float = 10000.0,
     trade_size: float | None = None,
     history_exchange_id: str | None = None,
+    validate_markets: bool = True,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     config = apply_preset(load_public_config(), preset)
     config["exchange"]["id"] = exchange_id
 
-    live_exchange_class = getattr(ccxt, exchange_id)
-    live_exchange = live_exchange_class({"enableRateLimit": config["exchange"]["enable_rate_limit"]})
-    live_exchange.load_markets()
     history_exchange_name = history_exchange_id or exchange_id
-    history_exchange_class = getattr(ccxt, history_exchange_name)
-    history_exchange = history_exchange_class({"enableRateLimit": config["exchange"]["enable_rate_limit"]})
-    history_exchange.load_markets()
+    live_exchange = _exchange(exchange_id, config["exchange"]["enable_rate_limit"]) if validate_markets else None
+    history_exchange = (
+        _exchange(history_exchange_name, config["exchange"]["enable_rate_limit"]) if validate_markets else None
+    )
     strategies = _build_strategy_modes(config, preset)
     fixed_trade_size = float(trade_size if trade_size is not None else config["loop_settings"]["quote_amount_usdt"])
     mode_results = {
-        mode["name"]: {"trades": 0, "wins": 0, "losses": 0, "net_return_pct": 0.0}
+        mode["name"]: {
+            "trades": 0,
+            "wins": 0,
+            "losses": 0,
+            "profitable_trades": 0,
+            "net_return_pct": 0.0,
+            "grid_net_return_pct": 0.0,
+            "grid_cycles": 0,
+        }
         for mode, _ in strategies
     }
 
@@ -261,6 +291,12 @@ def run_backtest(
         "trades": 0,
         "wins": 0,
         "losses": 0,
+        "profitable_trades": 0,
+        "price_gross_return_pct": 0.0,
+        "price_net_return_pct": 0.0,
+        "grid_gross_return_pct": 0.0,
+        "grid_net_return_pct": 0.0,
+        "grid_cycles": 0,
         "gross_return_pct": 0.0,
         "net_return_pct": 0.0,
     }
@@ -268,18 +304,32 @@ def run_backtest(
     candles_by_symbol: dict[str, pd.DataFrame] = {}
 
     for symbol in config["pairs"]:
-        if symbol not in live_exchange.markets:
+        if validate_markets and live_exchange is not None and symbol not in live_exchange.markets:
             results.append({"symbol": symbol, "status": "missing"})
             continue
-        if symbol not in history_exchange.markets:
+        if validate_markets and history_exchange is not None and symbol not in history_exchange.markets:
             results.append({"symbol": symbol, "status": "missing_history"})
             continue
 
-        candles = fetch_candles(history_exchange, symbol, config["exchange"]["timeframe"], days, cache_dir=cache_dir)
+        candles = fetch_candles(
+            history_exchange,
+            symbol,
+            config["exchange"]["timeframe"],
+            days,
+            cache_dir=cache_dir,
+            exchange_id=history_exchange_name,
+        )
         candles_by_symbol[symbol] = candles
+        prepared_strategies = _prepare_strategy_frames(candles, strategies)
         active_trade: dict[str, Any] | None = None
         wins = 0
         losses = 0
+        profitable_trades = 0
+        price_gross_return_pct = 0.0
+        price_net_return_pct = 0.0
+        grid_gross_return_pct = 0.0
+        grid_net_return_pct = 0.0
+        grid_cycles = 0
         gross_return_pct = 0.0
         net_return_pct = 0.0
         hold_bars: list[int] = []
@@ -288,12 +338,15 @@ def run_backtest(
         mode_entries = {mode["name"]: 0 for mode, _ in strategies}
         mode_wins = {mode["name"]: 0 for mode, _ in strategies}
         mode_losses = {mode["name"]: 0 for mode, _ in strategies}
+        mode_profitable = {mode["name"]: 0 for mode, _ in strategies}
+        mode_grid_net = {mode["name"]: 0.0 for mode, _ in strategies}
+        mode_grid_cycles = {mode["name"]: 0 for mode, _ in strategies}
 
         for index in range(min_candles, len(candles)):
             window = candles.iloc[: index + 1].reset_index(drop=True)
 
             if active_trade is None:
-                mode_name, signal = _analyze_entry(symbol, window, strategies)
+                mode_name, signal = _analyze_entry_fast(symbol, candles, index, prepared_strategies)
                 if signal.signal_type == "ENTER":
                     active_trade = {
                         "mode": mode_name,
@@ -301,26 +354,50 @@ def run_backtest(
                         "take_profit_price": float(signal.take_profit_price),
                         "safety_exit_price": float(signal.safety_exit_price),
                         "entry_index": index,
+                        "grid": _new_grid_state(signal, fee_pct),
                     }
                     mode_entries[mode_name] += 1
                 continue
 
+            _update_grid_state(active_trade["grid"], candles.iloc[index])
             price = float(window["close"].iloc[-1])
-            trade_return_pct = ((price / active_trade["entry_price"]) - 1) * 100
+            price_return_pct = ((price / active_trade["entry_price"]) - 1) * 100
+            grid_gross_pct = active_trade["grid"]["gross_return_pct"]
+            grid_net_pct = active_trade["grid"]["net_return_pct"]
+            trade_gross_return_pct = price_return_pct + grid_gross_pct
+            trade_net_return_pct = price_return_pct - fee_pct + grid_net_pct
             if price >= active_trade["take_profit_price"]:
                 wins += 1
-                gross_return_pct += trade_return_pct
-                net_return_pct += trade_return_pct - fee_pct
+                profitable_trades += int(trade_net_return_pct > 0)
+                price_gross_return_pct += price_return_pct
+                price_net_return_pct += price_return_pct - fee_pct
+                grid_gross_return_pct += grid_gross_pct
+                grid_net_return_pct += grid_net_pct
+                grid_cycles += active_trade["grid"]["cycles"]
+                gross_return_pct += trade_gross_return_pct
+                net_return_pct += trade_net_return_pct
                 mode_wins[active_trade["mode"]] += 1
-                mode_results[active_trade["mode"]]["net_return_pct"] += trade_return_pct - fee_pct
+                mode_profitable[active_trade["mode"]] += int(trade_net_return_pct > 0)
+                mode_grid_net[active_trade["mode"]] += grid_net_pct
+                mode_grid_cycles[active_trade["mode"]] += active_trade["grid"]["cycles"]
+                mode_results[active_trade["mode"]]["net_return_pct"] += trade_net_return_pct
                 hold_bars.append(index - active_trade["entry_index"])
                 active_trade = None
             elif price <= active_trade["safety_exit_price"]:
                 losses += 1
-                gross_return_pct += trade_return_pct
-                net_return_pct += trade_return_pct - fee_pct
+                profitable_trades += int(trade_net_return_pct > 0)
+                price_gross_return_pct += price_return_pct
+                price_net_return_pct += price_return_pct - fee_pct
+                grid_gross_return_pct += grid_gross_pct
+                grid_net_return_pct += grid_net_pct
+                grid_cycles += active_trade["grid"]["cycles"]
+                gross_return_pct += trade_gross_return_pct
+                net_return_pct += trade_net_return_pct
                 mode_losses[active_trade["mode"]] += 1
-                mode_results[active_trade["mode"]]["net_return_pct"] += trade_return_pct - fee_pct
+                mode_profitable[active_trade["mode"]] += int(trade_net_return_pct > 0)
+                mode_grid_net[active_trade["mode"]] += grid_net_pct
+                mode_grid_cycles[active_trade["mode"]] += active_trade["grid"]["cycles"]
+                mode_results[active_trade["mode"]]["net_return_pct"] += trade_net_return_pct
                 hold_bars.append(index - active_trade["entry_index"])
                 active_trade = None
 
@@ -333,7 +410,14 @@ def run_backtest(
                 "trades": trades,
                 "wins": wins,
                 "losses": losses,
+                "profitable_trades": profitable_trades,
                 "win_rate_pct": round((wins / trades * 100), 2) if trades else 0.0,
+                "profit_win_rate_pct": round((profitable_trades / trades * 100), 2) if trades else 0.0,
+                "price_gross_return_pct": round(price_gross_return_pct, 2),
+                "price_net_return_pct": round(price_net_return_pct, 2),
+                "grid_gross_return_pct": round(grid_gross_return_pct, 2),
+                "grid_net_return_pct": round(grid_net_return_pct, 2),
+                "grid_cycles": grid_cycles,
                 "gross_return_pct": round(gross_return_pct, 2),
                 "net_return_pct": round(net_return_pct, 2),
                 "avg_hold_hours": round((sum(hold_bars) / len(hold_bars) * 0.25), 2) if hold_bars else 0.0,
@@ -344,19 +428,42 @@ def run_backtest(
             mode_results[mode_name]["trades"] += mode_wins[mode_name] + mode_losses[mode_name]
             mode_results[mode_name]["wins"] += mode_wins[mode_name]
             mode_results[mode_name]["losses"] += mode_losses[mode_name]
+            mode_results[mode_name]["profitable_trades"] += mode_profitable[mode_name]
+            mode_results[mode_name]["grid_net_return_pct"] += mode_grid_net[mode_name]
+            mode_results[mode_name]["grid_cycles"] += mode_grid_cycles[mode_name]
         summary["trades"] += trades
         summary["wins"] += wins
         summary["losses"] += losses
+        summary["profitable_trades"] += profitable_trades
+        summary["price_gross_return_pct"] += price_gross_return_pct
+        summary["price_net_return_pct"] += price_net_return_pct
+        summary["grid_gross_return_pct"] += grid_gross_return_pct
+        summary["grid_net_return_pct"] += grid_net_return_pct
+        summary["grid_cycles"] += grid_cycles
         summary["gross_return_pct"] += gross_return_pct
         summary["net_return_pct"] += net_return_pct
 
+    summary["price_gross_return_pct"] = round(summary["price_gross_return_pct"], 2)
+    summary["price_net_return_pct"] = round(summary["price_net_return_pct"], 2)
+    summary["grid_gross_return_pct"] = round(summary["grid_gross_return_pct"], 2)
+    summary["grid_net_return_pct"] = round(summary["grid_net_return_pct"], 2)
     summary["gross_return_pct"] = round(summary["gross_return_pct"], 2)
     summary["net_return_pct"] = round(summary["net_return_pct"], 2)
     summary["win_rate_pct"] = round((summary["wins"] / summary["trades"] * 100), 2) if summary["trades"] else 0.0
+    summary["profit_win_rate_pct"] = (
+        round((summary["profitable_trades"] / summary["trades"] * 100), 2) if summary["trades"] else 0.0
+    )
+    summary["avg_grid_cycles_per_trade"] = (
+        round(summary["grid_cycles"] / summary["trades"], 2) if summary["trades"] else 0.0
+    )
     for mode_name, mode_result in mode_results.items():
         trades = mode_result["trades"]
         mode_result["win_rate_pct"] = round((mode_result["wins"] / trades * 100), 2) if trades else 0.0
+        mode_result["profit_win_rate_pct"] = (
+            round((mode_result["profitable_trades"] / trades * 100), 2) if trades else 0.0
+        )
         mode_result["net_return_pct"] = round(mode_result["net_return_pct"], 2)
+        mode_result["grid_net_return_pct"] = round(mode_result["grid_net_return_pct"], 2)
     summary["mode_results"] = mode_results
     balance_summary = simulate_portfolio(
         candles_by_symbol=candles_by_symbol,
@@ -410,6 +517,177 @@ def _analyze_entry(
     return "", Signal("HOLD", symbol=symbol, price=float(candles["close"].iloc[-1]), reason="no entry setup")
 
 
+def _prepare_strategy_frames(
+    candles: pd.DataFrame,
+    strategies: list[tuple[dict[str, Any], LoopStrategy]],
+) -> list[PreparedStrategy]:
+    source = candles.reset_index().rename(columns={"index": "source_index"})
+    prepared: list[PreparedStrategy] = []
+    for mode, strategy in strategies:
+        indicator_frame = strategy._with_indicators(source)
+        positions = {
+            int(row.source_index): int(row.Index)
+            for row in indicator_frame[["source_index"]].itertuples()
+        }
+        prepared.append((mode, strategy, indicator_frame, positions))
+    return prepared
+
+
+def _analyze_entry_fast(
+    symbol: str,
+    candles: pd.DataFrame,
+    current_index: int,
+    prepared_strategies: list[PreparedStrategy],
+) -> tuple[str, Signal]:
+    for mode, strategy, indicator_frame, positions in prepared_strategies:
+        prepared_index = positions.get(current_index)
+        if prepared_index is None or prepared_index < max(strategy.config["pullback_lookback"], strategy._range_lookback, 2):
+            continue
+        raw_window = candles.iloc[: current_index + 1].reset_index(drop=True)
+        if not mode_allowed(mode, raw_window, symbol):
+            continue
+        signal = _signal_from_indicators(strategy, symbol, indicator_frame.iloc[: prepared_index + 1])
+        if signal.signal_type == "ENTER":
+            return mode["name"], signal
+    return "", Signal("HOLD", symbol=symbol, price=float(candles["close"].iloc[current_index]), reason="no entry setup")
+
+
+def _signal_from_indicators(strategy: LoopStrategy, symbol: str, df: pd.DataFrame) -> Signal:
+    profile = strategy._symbol_profile(symbol)
+    latest = df.iloc[-1]
+    previous = df.iloc[-2]
+    recent = df.iloc[-strategy.config["pullback_lookback"] :]
+    range_window = df.iloc[-strategy._range_lookback :]
+    price = float(latest["close"])
+    atr = float(latest["atr"])
+    range_low = float(range_window["low"].min())
+    range_high = float(range_window["high"].max())
+    range_span = max(range_high - range_low, 0.0)
+    range_position = ((price - range_low) / range_span) if range_span else 1.0
+
+    trend_ok = (
+        latest["ema_fast"] > latest["ema_slow"] > latest["ema_trend"]
+        and latest["ema_trend"] > previous["ema_trend"]
+    )
+    price_reclaimed_fast_ema = latest["close"] > latest["ema_fast"] * profile["ema_reclaim_buffer"]
+    recent_high = float(recent["high"].max())
+    pullback_pct = (recent_high - price) / recent_high if recent_high else 0.0
+    pullback_ok = strategy.config["pullback_min_pct"] <= pullback_pct <= strategy.config["pullback_max_pct"]
+    bounce_ok = (
+        latest["close"] >= latest["low"] * (1 + (strategy.config["bounce_confirmation_pct"] * profile["bounce_multiplier"]))
+        and latest["close"] >= previous["close"] * profile["previous_close_buffer"]
+        and latest["close"] >= latest["open"] * profile["open_buffer"]
+    )
+    rsi_ok = (
+        (strategy.config["min_rsi"] - profile["rsi_low_buffer"])
+        <= latest["rsi"]
+        <= (strategy.config["max_rsi"] + profile["rsi_high_buffer"])
+    )
+    volume_ok = latest["volume_ratio"] >= max(strategy.config["min_volume_ratio"] - profile["volume_buffer"], 0.6)
+    loop_plan = strategy._build_loop_plan(range_window, price, atr)
+    loop_ready = bool(loop_plan) and strategy._loop_ready(loop_plan, price, range_position, profile)
+
+    if trend_ok and price_reclaimed_fast_ema and pullback_ok and bounce_ok and rsi_ok and volume_ok and loop_ready:
+        assert loop_plan is not None
+        return Signal(
+            "ENTER",
+            symbol=symbol,
+            price=price,
+            take_profit_price=loop_plan["take_profit_price"],
+            safety_exit_price=loop_plan["safety_exit_price"],
+            reason="Trend up, shallow pullback, bounce confirmed",
+            loop_settings={
+                **strategy.loop_settings,
+                "loop_plan": loop_plan,
+            },
+        )
+
+    return Signal("HOLD", symbol=symbol, price=price, reason="no entry setup")
+
+
+def _new_grid_state(signal: Signal, fee_pct: float) -> dict[str, Any]:
+    loop_settings = signal.loop_settings or {}
+    loop_plan = loop_settings.get("loop_plan", {})
+    order_distance_pct = float(
+        loop_plan.get("order_distance_pct")
+        or loop_settings.get("order_distance_pct")
+        or 1.5
+    )
+    order_count = int(loop_plan.get("order_count") or loop_settings.get("order_count") or 10)
+    step = order_distance_pct / 100
+    max_pending_orders = max(order_count // 2, 1)
+
+    return {
+        "entry_price": float(signal.price),
+        "order_distance_pct": order_distance_pct,
+        "order_count": order_count,
+        "step": step,
+        "fee_pct": fee_pct,
+        "max_pending_orders": max_pending_orders,
+        "pending_levels": [],
+        "cycles": 0,
+        "gross_return_pct": 0.0,
+        "net_return_pct": 0.0,
+    }
+
+
+def _update_grid_state(grid_state: dict[str, Any], candle: pd.Series) -> None:
+    for price in _candle_path(candle):
+        _process_grid_price(grid_state, price)
+
+
+def _candle_path(candle: pd.Series) -> list[float]:
+    open_price = float(candle["open"])
+    high_price = float(candle["high"])
+    low_price = float(candle["low"])
+    close_price = float(candle["close"])
+    if close_price >= open_price:
+        return [open_price, low_price, high_price, close_price]
+    return [open_price, high_price, low_price, close_price]
+
+
+def _process_grid_price(grid_state: dict[str, Any], price: float) -> None:
+    entry_price = float(grid_state["entry_price"])
+    step = float(grid_state["step"])
+    max_pending_orders = int(grid_state["max_pending_orders"])
+    pending_levels = set(grid_state["pending_levels"])
+
+    for level in range(1, max_pending_orders + 1):
+        if level in pending_levels:
+            continue
+        buy_price = entry_price * ((1 - step) ** level)
+        if price <= buy_price:
+            pending_levels.add(level)
+
+    for level in sorted(pending_levels):
+        buy_price = entry_price * ((1 - step) ** level)
+        sell_price = buy_price * (1 + step)
+        if price >= sell_price:
+            pending_levels.remove(level)
+            grid_state["cycles"] += 1
+            grid_state["gross_return_pct"] += grid_state["order_distance_pct"] / grid_state["order_count"]
+            grid_state["net_return_pct"] += (
+                grid_state["order_distance_pct"] - grid_state["fee_pct"]
+            ) / grid_state["order_count"]
+
+    grid_state["pending_levels"] = sorted(pending_levels)
+
+
+def _combined_trade_returns(active_trade: dict[str, Any], price: float, fee_pct: float) -> dict[str, float]:
+    price_gross_return_pct = ((price / active_trade["entry_price"]) - 1) * 100
+    price_net_return_pct = price_gross_return_pct - fee_pct
+    grid_gross_return_pct = active_trade["grid"]["gross_return_pct"]
+    grid_net_return_pct = active_trade["grid"]["net_return_pct"]
+    return {
+        "price_gross_return_pct": price_gross_return_pct,
+        "price_net_return_pct": price_net_return_pct,
+        "grid_gross_return_pct": grid_gross_return_pct,
+        "grid_net_return_pct": grid_net_return_pct,
+        "gross_return_pct": price_gross_return_pct + grid_gross_return_pct,
+        "net_return_pct": price_net_return_pct + grid_net_return_pct,
+    }
+
+
 def simulate_portfolio(
     candles_by_symbol: dict[str, pd.DataFrame],
     strategies: list[tuple[dict[str, Any], LoopStrategy]],
@@ -420,6 +698,10 @@ def simulate_portfolio(
     cash_balance = float(starting_balance)
     active_trades: dict[str, dict[str, Any]] = {}
     timeline: list[tuple[int, str, int]] = []
+    prepared_by_symbol = {
+        symbol: _prepare_strategy_frames(candles, strategies)
+        for symbol, candles in candles_by_symbol.items()
+    }
 
     for symbol, candles in candles_by_symbol.items():
         min_candles = max(strategy._minimum_candles for _, strategy in strategies)
@@ -435,10 +717,11 @@ def simulate_portfolio(
 
         active_trade = active_trades.get(symbol)
         if active_trade is not None:
+            _update_grid_state(active_trade["grid"], candles.iloc[index])
             price = float(window["close"].iloc[-1])
             if price >= active_trade["take_profit_price"] or price <= active_trade["safety_exit_price"]:
-                trade_return_pct = ((price / active_trade["entry_price"]) - 1) * 100
-                net_multiplier = 1 + ((trade_return_pct - fee_pct) / 100)
+                returns = _combined_trade_returns(active_trade, price, fee_pct)
+                net_multiplier = 1 + (returns["net_return_pct"] / 100)
                 cash_balance += trade_size * net_multiplier
                 active_trades.pop(symbol, None)
             continue
@@ -446,21 +729,22 @@ def simulate_portfolio(
         if cash_balance < trade_size:
             continue
 
-        _, signal = _analyze_entry(symbol, window, strategies)
+        _, signal = _analyze_entry_fast(symbol, candles, index, prepared_by_symbol[symbol])
         if signal.signal_type == "ENTER":
             cash_balance -= trade_size
             active_trades[symbol] = {
                 "entry_price": signal.price,
                 "take_profit_price": float(signal.take_profit_price),
                 "safety_exit_price": float(signal.safety_exit_price),
+                "grid": _new_grid_state(signal, fee_pct),
             }
             max_concurrent = max(max_concurrent, len(active_trades))
 
     ending_equity = cash_balance
     for symbol, trade in active_trades.items():
         latest_price = float(candles_by_symbol[symbol]["close"].iloc[-1])
-        unrealized_return_pct = ((latest_price / trade["entry_price"]) - 1) * 100
-        ending_equity += trade_size * (1 + ((unrealized_return_pct - fee_pct) / 100))
+        returns = _combined_trade_returns(trade, latest_price, fee_pct)
+        ending_equity += trade_size * (1 + (returns["net_return_pct"] / 100))
 
     return {
         "ending_balance": round(cash_balance, 2),
@@ -481,6 +765,11 @@ def main() -> None:
     parser.add_argument("--cache-dir", default="data/backtests", help="Folder for cached public candle data.")
     parser.add_argument("--starting-balance", type=float, default=10000.0, help="Starting cash balance for portfolio simulation.")
     parser.add_argument("--trade-size", type=float, default=None, help="Fixed dollar size per trade. Defaults to loop quote amount.")
+    parser.add_argument(
+        "--skip-market-validation",
+        action="store_true",
+        help="Use cached candles without reloading exchange markets; useful for fast local tuning.",
+    )
     args = parser.parse_args()
 
     summary, results = run_backtest(
@@ -492,6 +781,7 @@ def main() -> None:
         starting_balance=args.starting_balance,
         trade_size=args.trade_size,
         history_exchange_id=args.history_exchange,
+        validate_markets=not args.skip_market_validation,
     )
     print("SUMMARY")
     for key, value in summary.items():
@@ -511,6 +801,10 @@ def main() -> None:
                     "wins",
                     "losses",
                     "win_rate_pct",
+                    "profit_win_rate_pct",
+                    "price_net_return_pct",
+                    "grid_cycles",
+                    "grid_net_return_pct",
                     "gross_return_pct",
                     "net_return_pct",
                     "avg_hold_hours",
