@@ -25,10 +25,10 @@ class LoopStrategy:
     def __init__(self, strategy_config: dict, loop_settings: dict) -> None:
         self.config = strategy_config
         self.loop_settings = loop_settings
-        self.min_order_distance_pct = 0.5
-        self.max_order_count = 40
-        self.min_order_count = 4
-        self.assumed_round_trip_fee_pct = 0.2
+        self.preset_name = loop_settings.get("preset_name", "Mid-term")
+        self.order_distance_pct = float(loop_settings.get("order_distance_pct", 1.5))
+        self.order_count = int(loop_settings.get("order_count", 10))
+        self.assumed_round_trip_fee_pct = float(loop_settings.get("assumed_round_trip_fee_pct", 0.2))
 
     def analyze_entry(self, symbol: str, candles: pd.DataFrame) -> Signal:
         profile = self._symbol_profile(symbol)
@@ -42,6 +42,10 @@ class LoopStrategy:
         range_window = df.iloc[-self._range_lookback :]
         price = float(latest["close"])
         atr = float(latest["atr"])
+        range_low = float(range_window["low"].min())
+        range_high = float(range_window["high"].max())
+        range_span = max(range_high - range_low, 0.0)
+        range_position = ((price - range_low) / range_span) if range_span else 1.0
 
         trend_ok = (
             latest["ema_fast"] > latest["ema_slow"] > latest["ema_trend"]
@@ -63,7 +67,7 @@ class LoopStrategy:
         )
         volume_ok = latest["volume_ratio"] >= max(self.config["min_volume_ratio"] - profile["volume_buffer"], 0.6)
         loop_plan = self._build_loop_plan(range_window, price, atr)
-        loop_ready = bool(loop_plan) and self._loop_ready(loop_plan, price, profile)
+        loop_ready = bool(loop_plan) and self._loop_ready(loop_plan, price, range_position, profile)
 
         if trend_ok and price_reclaimed_fast_ema and pullback_ok and bounce_ok and rsi_ok and volume_ok and loop_ready:
             assert loop_plan is not None
@@ -71,7 +75,7 @@ class LoopStrategy:
                 "ENTER",
                 symbol=symbol,
                 price=price,
-                take_profit_price=loop_plan["high_price"],
+                take_profit_price=loop_plan["take_profit_price"],
                 safety_exit_price=loop_plan["safety_exit_price"],
                 reason="Trend up, shallow pullback, bounce confirmed",
                 loop_settings={
@@ -129,66 +133,53 @@ class LoopStrategy:
             return None
 
         raw_range_width_pct = ((range_high - range_low) / price) * 100
-        order_distance_pct = max(
-            self.min_order_distance_pct,
-            round(max((atr / price) * 100 * 0.65, self.assumed_round_trip_fee_pct * 2.0), 2),
-        )
-        min_required_order_count = max(
-            self.min_order_count,
-            math.ceil(raw_range_width_pct / order_distance_pct) + 2,
-        )
-        if min_required_order_count > self.max_order_count:
+        order_distance_pct = self.order_distance_pct
+        order_count = self.order_count
+
+        if order_distance_pct < 0.5 or order_count < 10 or order_count % 2 != 0:
             return None
 
-        order_count = min_required_order_count
         precision = self._price_precision(price)
-        safety_exit_price = round(range_low - (atr * 0.15), precision)
-        high_price = round(range_high, precision)
-        low_price = round(range_low, precision)
-        reward_to_risk = (high_price - price) / (price - safety_exit_price) if price > safety_exit_price else 0.0
+        safety_exit_pct = max(order_distance_pct, (atr / price) * 100 * 0.85)
+        take_profit_pct = max(order_distance_pct * 1.15, (atr / price) * 100 * 1.05)
+        safety_exit_price = round(price * (1 - (safety_exit_pct / 100)), precision)
+        take_profit_price = round(price * (1 + (take_profit_pct / 100)), precision)
+        reward_to_risk = (take_profit_price - price) / (price - safety_exit_price) if price > safety_exit_price else 0.0
 
         return {
-            "low_price": low_price,
-            "high_price": high_price,
+            "preset_name": self.preset_name,
             "safety_exit_price": safety_exit_price,
+            "take_profit_price": take_profit_price,
             "order_distance_pct": order_distance_pct,
             "order_count": order_count,
-            "min_required_order_count": min_required_order_count,
             "range_width_pct": round(raw_range_width_pct, 2),
+            "range_low": round(range_low, precision),
+            "range_high": round(range_high, precision),
             "fee_buffer_pct": round(order_distance_pct - self.assumed_round_trip_fee_pct, 2),
             "reward_to_risk": round(reward_to_risk, 2),
         }
 
-    def _loop_ready(self, loop_plan: dict, price: float, profile: dict) -> bool:
-        low_price = float(loop_plan["low_price"])
-        high_price = float(loop_plan["high_price"])
+    def _loop_ready(self, loop_plan: dict, price: float, range_position: float, profile: dict) -> bool:
         safety_exit_price = float(loop_plan["safety_exit_price"])
         order_distance_pct = float(loop_plan["order_distance_pct"])
         order_count = int(loop_plan["order_count"])
-        min_required_order_count = int(loop_plan["min_required_order_count"])
         range_width_pct = float(loop_plan["range_width_pct"])
         reward_to_risk = float(loop_plan["reward_to_risk"])
 
-        if not (self.min_order_count <= order_count <= self.max_order_count):
+        if order_count < 10 or order_count > 40 or order_count % 2 != 0:
             return False
-        if order_count < min_required_order_count:
+        if order_distance_pct < 0.5:
             return False
-        if order_distance_pct < self.min_order_distance_pct:
+        if range_width_pct < max(order_distance_pct * profile["min_range_multiple"], profile["min_range_floor_pct"]):
             return False
-        if range_width_pct < order_distance_pct * max(order_count - 2, 1):
+        if range_position > profile["max_range_position"]:
             return False
         if (order_distance_pct - self.assumed_round_trip_fee_pct) < profile["fee_edge_buffer"]:
             return False
         if reward_to_risk < profile["min_reward_to_risk"]:
             return False
-        if not (low_price < price < high_price):
-            return False
 
-        range_position = (price - low_price) / (high_price - low_price)
-        if range_position > profile["max_range_position"]:
-            return False
-
-        return safety_exit_price < low_price
+        return safety_exit_price < price
 
     @staticmethod
     def _symbol_profile(symbol: str) -> dict:
@@ -201,9 +192,11 @@ class LoopStrategy:
                 "rsi_low_buffer": 2,
                 "rsi_high_buffer": 2,
                 "volume_buffer": 0.1,
-                "fee_edge_buffer": 0.12,
-                "min_reward_to_risk": 0.7,
-                "max_range_position": 0.8,
+                "fee_edge_buffer": 0.08,
+                "min_reward_to_risk": 0.9,
+                "max_range_position": 0.76,
+                "min_range_multiple": 1.5,
+                "min_range_floor_pct": 1.2,
             }
 
         return {
@@ -214,9 +207,11 @@ class LoopStrategy:
             "rsi_low_buffer": 0,
             "rsi_high_buffer": 0,
             "volume_buffer": 0.0,
-            "fee_edge_buffer": 0.15,
-            "min_reward_to_risk": 0.8,
-            "max_range_position": 0.75,
+            "fee_edge_buffer": 0.1,
+            "min_reward_to_risk": 0.95,
+            "max_range_position": 0.7,
+            "min_range_multiple": 1.7,
+            "min_range_floor_pct": 1.5,
         }
 
     @staticmethod
