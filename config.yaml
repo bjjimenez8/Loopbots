@@ -25,10 +25,8 @@ morning_brief:
 pairs:
   - BTC/USDT
   - ETH/USDT
-  - SOL/USDT
   - DOGE/USDT
   - LINK/USDT
-  - AVAX/USDT
   - SUI/USDT
 
 strategy:
@@ -50,6 +48,10 @@ strategy:
   max_active_minutes: 180
 
 loop_settings:
+  preset_name: Mid-term
+  order_distance_pct: 1.5
+  order_count: 10
+  assumed_round_trip_fee_pct: 0.2
   suggested_profit_pct: 0.006
   suggested_safety_exit_pct: 0.004
   max_loop_count: 3
