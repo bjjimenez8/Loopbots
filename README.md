@@ -28,6 +28,7 @@ Loopbots/
   trade_manager.py
   backtester.py
   run_backtest.py
+  news_brief.py
   config.yaml
   requirements.txt
   README.md
@@ -60,6 +61,8 @@ python main.py
 
 The bot runs one scan immediately, then repeats every 15 minutes.
 
+It also sends a small morning crypto brief every day at `8:00 AM` Pacific with a few market lines and crypto headlines.
+
 ## Alert Format
 
 Entry alerts look like this:
@@ -85,12 +88,34 @@ Stop Loss Hit: 3798.42
 Reason: Safety exit touched
 ```
 
+A morning brief looks like this:
+
+```text
+Good morning.
+
+Morning Crypto Brief
+Mood: mostly green and steady.
+
+Market check:
+- BTC/USDT: 108245.0000 (+1.24% 24h)
+- ETH/USDT: 3892.4400 (+0.85% 24h)
+- SOL/USDT: 176.2100 (+2.12% 24h)
+
+Headlines:
+1. Example headline
+2. Example headline
+3. Example headline
+
+Take it easy and wait for clean setups.
+```
+
 ## Storage
 
 Loopbots stores state locally:
 
 - Active trades: `data/active_trades.json`
 - Trade history: `data/trade_history.csv`
+- Morning brief state: `data/morning_brief_state.json`
 - Logs: `logs/loopbots.log`
 
 The bot opens one active alert per pair at a time. A pair will not send another `ENTER` alert until its active trade exits.
