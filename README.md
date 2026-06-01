@@ -9,13 +9,7 @@ It does not send "no trade" messages.
 
 ## Monitored Pairs
 
-- BTC/USDT
-- ETH/USDT
-- SOL/USDT
-- DOGE/USDT
-- LINK/USDT
-- AVAX/USDT
-- SUI/USDT
+Loopbots can scan a configured fallback list or automatically discover liquid, volatile `USDT` spot pairs from the live exchange.
 
 ## Project Structure
 
@@ -70,6 +64,8 @@ Entry alerts look like this:
 ```text
 🚨 LOOP BOT ENTRY
 Coin: ETH/USDT
+Preset: Mid-term
+Bitsgap Default: 10 orders / 1.5% spacing
 Action: Start loop bot / enter trade
 Entry: 3842.15
 Stop Loss / Safety Exit: 3798.42
@@ -139,16 +135,22 @@ These settings are adjustable in `config.yaml`, while `run_backtest.py` also sup
 
 `backtester.py` supports CSV-based simulation, and `run_backtest.py` adds reusable public-market backtests with:
 
-- exchange selection
+- a live exchange universe
+- an optional separate history exchange
 - short vs mid preset comparison
 - cached candle downloads in `data/backtests/`
 - fixed-size portfolio balance simulation
 
-Example:
+Example using Kraken as the real exchange universe and OKX only for deeper history:
 
 ```bash
-python run_backtest.py --exchange okx --days 60 --fee-pct 0.2 --preset short --starting-balance 10000 --trade-size 1000
+python run_backtest.py --exchange kraken --history-exchange okx --days 60 --fee-pct 0.2 --preset mid --starting-balance 10000 --trade-size 1000
 ```
+
+In that mode:
+
+- `--exchange` controls which symbols must exist on your real trading exchange.
+- `--history-exchange` controls where the historical candles come from.
 
 CSV candle files should use:
 
