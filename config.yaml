@@ -17,9 +17,9 @@ pair_discovery:
   enabled: true
   refresh_minutes: 60
   quote_asset: USDT
-  min_quote_volume_usdt: 2000000
+  min_quote_volume_usdt: 1250000
   min_last_price: 0.05
-  min_volatility_pct: 2.5
+  min_volatility_pct: 1.8
   max_volatility_pct: 18.0
   max_pairs: 10
   preferred_base_assets:
@@ -32,6 +32,19 @@ pair_discovery:
     - XRP
     - ADA
     - BERA
+    - XMR
+  strategy_watchlist_base_assets:
+    - BERA
+    - DOGE
+    - LINK
+    - XRP
+    - ADA
+    - SOL
+    - AVAX
+    - XMR
+  watchlist_min_quote_volume_usdt: 500000
+  watchlist_min_volatility_pct: 1.2
+  watchlist_max_volatility_pct: 22.0
   excluded_base_assets:
     - USDT
     - USDC
