@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from copy import deepcopy
 import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -9,7 +10,8 @@ from typing import Any
 import ccxt
 import pandas as pd
 
-from strategy import LoopStrategy
+from market_regime import mode_allowed
+from strategy import LoopStrategy, Signal
 
 
 DEFAULT_CONFIG: dict[str, Any] = {
@@ -54,9 +56,55 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "max_loop_count": 3,
         "quote_amount_usdt": 100,
     },
+    "strategy_modes": [
+        {
+            "name": "short",
+            "market_type": "sideways",
+            "allowed_base_assets": ["DOGE", "LINK", "SOL", "AVAX", "XRP", "ADA", "BERA", "XMR"],
+            "market_type_rules": {
+                "lookback": 96,
+                "min_range_width_pct": 3.0,
+                "max_range_width_pct": 9.0,
+                "max_ema_slope_pct": 0.7,
+                "min_support_touches": 4,
+                "min_resistance_touches": 4,
+                "min_range_position": 0.2,
+                "max_range_position": 0.68,
+            },
+            "strategy_overrides": {
+                "pullback_lookback": 5,
+                "pullback_max_pct": 0.028,
+                "bounce_confirmation_pct": 0.0012,
+                "min_volume_ratio": 0.8,
+                "max_active_minutes": 240,
+            },
+            "loop_settings": {
+                "preset_name": "Short-term",
+                "order_distance_pct": 1.0,
+                "order_count": 10,
+            },
+        },
+        {
+            "name": "mid",
+            "market_type": "any",
+            "strategy_overrides": {
+                "pullback_lookback": 6,
+                "pullback_max_pct": 0.035,
+                "bounce_confirmation_pct": 0.0015,
+                "min_volume_ratio": 0.85,
+                "max_active_minutes": 180,
+            },
+            "loop_settings": {
+                "preset_name": "Mid-term",
+                "order_distance_pct": 1.5,
+                "order_count": 10,
+            },
+        },
+    ],
 }
 
 PRESET_OVERRIDES: dict[str, dict[str, Any]] = {
+    "dual": {},
     "short": {
         "loop_settings": {
             "preset_name": "Short-term",
@@ -102,6 +150,7 @@ def load_public_config() -> dict[str, Any]:
             "pairs": loaded["pairs"],
             "strategy": loaded["strategy"],
             "loop_settings": loaded["loop_settings"],
+            "strategy_modes": loaded.get("strategy_modes", DEFAULT_CONFIG["strategy_modes"]),
         }
     except Exception:
         return DEFAULT_CONFIG
@@ -115,6 +164,7 @@ def apply_preset(config: dict[str, Any], preset: str) -> dict[str, Any]:
         "pairs": list(config["pairs"]),
         "strategy": dict(config["strategy"]),
         "loop_settings": dict(config["loop_settings"]),
+        "strategy_modes": list(config.get("strategy_modes", [])),
     }
     if "strategy" in overrides:
         merged["strategy"].update(overrides["strategy"])
@@ -193,8 +243,12 @@ def run_backtest(
     history_exchange_class = getattr(ccxt, history_exchange_name)
     history_exchange = history_exchange_class({"enableRateLimit": config["exchange"]["enable_rate_limit"]})
     history_exchange.load_markets()
-    strategy = LoopStrategy(config["strategy"], config["loop_settings"])
+    strategies = _build_strategy_modes(config, preset)
     fixed_trade_size = float(trade_size if trade_size is not None else config["loop_settings"]["quote_amount_usdt"])
+    mode_results = {
+        mode["name"]: {"trades": 0, "wins": 0, "losses": 0, "net_return_pct": 0.0}
+        for mode, _ in strategies
+    }
 
     summary = {
         "exchange": exchange_id,
@@ -230,18 +284,25 @@ def run_backtest(
         net_return_pct = 0.0
         hold_bars: list[int] = []
 
-        for index in range(strategy._minimum_candles, len(candles)):
+        min_candles = max(strategy._minimum_candles for _, strategy in strategies)
+        mode_entries = {mode["name"]: 0 for mode, _ in strategies}
+        mode_wins = {mode["name"]: 0 for mode, _ in strategies}
+        mode_losses = {mode["name"]: 0 for mode, _ in strategies}
+
+        for index in range(min_candles, len(candles)):
             window = candles.iloc[: index + 1].reset_index(drop=True)
 
             if active_trade is None:
-                signal = strategy.analyze_entry(symbol, window)
+                mode_name, signal = _analyze_entry(symbol, window, strategies)
                 if signal.signal_type == "ENTER":
                     active_trade = {
+                        "mode": mode_name,
                         "entry_price": signal.price,
                         "take_profit_price": float(signal.take_profit_price),
                         "safety_exit_price": float(signal.safety_exit_price),
                         "entry_index": index,
                     }
+                    mode_entries[mode_name] += 1
                 continue
 
             price = float(window["close"].iloc[-1])
@@ -250,12 +311,16 @@ def run_backtest(
                 wins += 1
                 gross_return_pct += trade_return_pct
                 net_return_pct += trade_return_pct - fee_pct
+                mode_wins[active_trade["mode"]] += 1
+                mode_results[active_trade["mode"]]["net_return_pct"] += trade_return_pct - fee_pct
                 hold_bars.append(index - active_trade["entry_index"])
                 active_trade = None
             elif price <= active_trade["safety_exit_price"]:
                 losses += 1
                 gross_return_pct += trade_return_pct
                 net_return_pct += trade_return_pct - fee_pct
+                mode_losses[active_trade["mode"]] += 1
+                mode_results[active_trade["mode"]]["net_return_pct"] += trade_return_pct - fee_pct
                 hold_bars.append(index - active_trade["entry_index"])
                 active_trade = None
 
@@ -272,8 +337,13 @@ def run_backtest(
                 "gross_return_pct": round(gross_return_pct, 2),
                 "net_return_pct": round(net_return_pct, 2),
                 "avg_hold_hours": round((sum(hold_bars) / len(hold_bars) * 0.25), 2) if hold_bars else 0.0,
+                "entries_by_mode": mode_entries,
             }
         )
+        for mode_name in mode_results:
+            mode_results[mode_name]["trades"] += mode_wins[mode_name] + mode_losses[mode_name]
+            mode_results[mode_name]["wins"] += mode_wins[mode_name]
+            mode_results[mode_name]["losses"] += mode_losses[mode_name]
         summary["trades"] += trades
         summary["wins"] += wins
         summary["losses"] += losses
@@ -283,9 +353,14 @@ def run_backtest(
     summary["gross_return_pct"] = round(summary["gross_return_pct"], 2)
     summary["net_return_pct"] = round(summary["net_return_pct"], 2)
     summary["win_rate_pct"] = round((summary["wins"] / summary["trades"] * 100), 2) if summary["trades"] else 0.0
+    for mode_name, mode_result in mode_results.items():
+        trades = mode_result["trades"]
+        mode_result["win_rate_pct"] = round((mode_result["wins"] / trades * 100), 2) if trades else 0.0
+        mode_result["net_return_pct"] = round(mode_result["net_return_pct"], 2)
+    summary["mode_results"] = mode_results
     balance_summary = simulate_portfolio(
         candles_by_symbol=candles_by_symbol,
-        strategy=strategy,
+        strategies=strategies,
         fee_pct=fee_pct,
         starting_balance=starting_balance,
         trade_size=fixed_trade_size,
@@ -294,9 +369,50 @@ def run_backtest(
     return summary, results
 
 
+def _build_strategy_modes(config: dict[str, Any], preset: str) -> list[tuple[dict[str, Any], LoopStrategy]]:
+    if preset == "dual":
+        modes = config.get("strategy_modes") or DEFAULT_CONFIG["strategy_modes"]
+    else:
+        mode_name = preset
+        strategy_config = deepcopy(config["strategy"])
+        loop_settings = deepcopy(config["loop_settings"])
+        overrides = PRESET_OVERRIDES.get(preset, {})
+        strategy_config.update(overrides.get("strategy", {}))
+        loop_settings.update(overrides.get("loop_settings", {}))
+        return [
+            (
+                {"name": mode_name, "market_type": "any"},
+                LoopStrategy(strategy_config, loop_settings),
+            )
+        ]
+
+    strategies: list[tuple[dict[str, Any], LoopStrategy]] = []
+    for mode in modes:
+        strategy_config = deepcopy(config["strategy"])
+        strategy_config.update(mode.get("strategy_overrides", {}))
+        loop_settings = deepcopy(config["loop_settings"])
+        loop_settings.update(mode.get("loop_settings", {}))
+        strategies.append((mode, LoopStrategy(strategy_config, loop_settings)))
+    return strategies
+
+
+def _analyze_entry(
+    symbol: str,
+    candles: pd.DataFrame,
+    strategies: list[tuple[dict[str, Any], LoopStrategy]],
+) -> tuple[str, Signal]:
+    for mode, strategy in strategies:
+        if not mode_allowed(mode, candles, symbol):
+            continue
+        signal = strategy.analyze_entry(symbol, candles)
+        if signal.signal_type == "ENTER":
+            return mode["name"], signal
+    return "", Signal("HOLD", symbol=symbol, price=float(candles["close"].iloc[-1]), reason="no entry setup")
+
+
 def simulate_portfolio(
     candles_by_symbol: dict[str, pd.DataFrame],
-    strategy: LoopStrategy,
+    strategies: list[tuple[dict[str, Any], LoopStrategy]],
     fee_pct: float,
     starting_balance: float,
     trade_size: float,
@@ -306,7 +422,8 @@ def simulate_portfolio(
     timeline: list[tuple[int, str, int]] = []
 
     for symbol, candles in candles_by_symbol.items():
-        for index in range(strategy._minimum_candles, len(candles)):
+        min_candles = max(strategy._minimum_candles for _, strategy in strategies)
+        for index in range(min_candles, len(candles)):
             timeline.append((int(candles.iloc[index]["timestamp"]), symbol, index))
 
     timeline.sort()
@@ -329,7 +446,7 @@ def simulate_portfolio(
         if cash_balance < trade_size:
             continue
 
-        signal = strategy.analyze_entry(symbol, window)
+        _, signal = _analyze_entry(symbol, window, strategies)
         if signal.signal_type == "ENTER":
             cash_balance -= trade_size
             active_trades[symbol] = {
@@ -360,7 +477,7 @@ def main() -> None:
     parser.add_argument("--history-exchange", default=None, help="Optional history source exchange id for deeper candle data.")
     parser.add_argument("--days", type=int, default=60, help="Number of days of 15m candles to backtest.")
     parser.add_argument("--fee-pct", type=float, default=0.2, help="Round-trip fee assumption in percent.")
-    parser.add_argument("--preset", default="short", choices=sorted(PRESET_OVERRIDES.keys()), help="Strategy preset to test.")
+    parser.add_argument("--preset", default="dual", choices=sorted(PRESET_OVERRIDES.keys()), help="Strategy preset to test.")
     parser.add_argument("--cache-dir", default="data/backtests", help="Folder for cached public candle data.")
     parser.add_argument("--starting-balance", type=float, default=10000.0, help="Starting cash balance for portfolio simulation.")
     parser.add_argument("--trade-size", type=float, default=None, help="Fixed dollar size per trade. Defaults to loop quote amount.")

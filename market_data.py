@@ -100,12 +100,8 @@ class MarketDataClient:
                 continue
 
             ticker = tickers.get(symbol) or {}
-            quote_volume = self._coalesce_number(
-                ticker.get("quoteVolume"),
-                ticker.get("baseVolume"),
-                0.0,
-            )
             last_price = self._coalesce_number(ticker.get("last"), ticker.get("close"), 0.0)
+            quote_volume = self._quote_volume(ticker, last_price)
             high_price = self._coalesce_number(ticker.get("high"), last_price, 0.0)
             low_price = self._coalesce_number(ticker.get("low"), last_price, 0.0)
             is_watchlist = base_asset in strategy_watchlist_bases
@@ -177,3 +173,12 @@ class MarketDataClient:
             except (TypeError, ValueError):
                 continue
         return 0.0
+
+    @classmethod
+    def _quote_volume(cls, ticker: dict[str, Any], last_price: float) -> float:
+        quote_volume = cls._coalesce_number(ticker.get("quoteVolume"))
+        if quote_volume > 0:
+            return quote_volume
+
+        base_volume = cls._coalesce_number(ticker.get("baseVolume"))
+        return base_volume * last_price if last_price > 0 else 0.0

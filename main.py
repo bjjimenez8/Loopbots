@@ -13,6 +13,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
+from market_regime import mode_allowed
 from market_data import MarketDataClient, MarketDataConfig
 from news_brief import MorningBriefConfig, MorningBriefService
 from strategy import LoopStrategy, Signal
@@ -112,7 +113,7 @@ class LoopbotsApp:
                         )
                         continue
 
-                    exit_signal = self.strategies[0].analyze_exit(symbol, candles, active_trade)
+                    exit_signal = self.strategies[0]["strategy"].analyze_exit(symbol, candles, active_trade)
                     if exit_signal.signal_type == "EXIT":
                         self.trade_manager.close_trade(exit_signal, exit_signal.reason)
                         await self.telegram.send_exit_alert(exit_signal)
@@ -158,21 +159,24 @@ class LoopbotsApp:
             logging.exception("Failed to send morning brief")
 
     def _analyze_entry(self, symbol: str, candles: Any) -> Signal:
-        for strategy in self.strategies:
+        for strategy_mode in self.strategies:
+            if not mode_allowed(strategy_mode["mode"], candles, symbol):
+                continue
+            strategy = strategy_mode["strategy"]
             signal = strategy.analyze_entry(symbol, candles)
             if signal.signal_type == "ENTER":
                 return signal
         return Signal("HOLD", symbol=symbol, price=float(candles["close"].iloc[-1]), reason="no entry setup")
 
-    def _build_strategies(self, config: dict[str, Any]) -> list[LoopStrategy]:
+    def _build_strategies(self, config: dict[str, Any]) -> list[dict[str, Any]]:
         strategy_modes = config.get("strategy_modes") or self._default_strategy_modes()
-        strategies: list[LoopStrategy] = []
+        strategies: list[dict[str, Any]] = []
         for mode in strategy_modes:
             strategy_config = deepcopy(config["strategy"])
             strategy_config.update(mode.get("strategy_overrides", {}))
             loop_settings = deepcopy(config["loop_settings"])
             loop_settings.update(mode.get("loop_settings", {}))
-            strategies.append(LoopStrategy(strategy_config, loop_settings))
+            strategies.append({"mode": mode, "strategy": LoopStrategy(strategy_config, loop_settings)})
         return strategies
 
     @staticmethod
@@ -180,6 +184,18 @@ class LoopbotsApp:
         return [
             {
                 "name": "short",
+                "market_type": "sideways",
+                "allowed_base_assets": ["DOGE", "LINK", "SOL", "AVAX", "XRP", "ADA", "BERA", "XMR"],
+                "market_type_rules": {
+                    "lookback": 96,
+                    "min_range_width_pct": 3.0,
+                    "max_range_width_pct": 9.0,
+                    "max_ema_slope_pct": 0.7,
+                    "min_support_touches": 4,
+                    "min_resistance_touches": 4,
+                    "min_range_position": 0.2,
+                    "max_range_position": 0.68,
+                },
                 "strategy_overrides": {
                     "pullback_lookback": 5,
                     "pullback_max_pct": 0.028,
@@ -195,6 +211,7 @@ class LoopbotsApp:
             },
             {
                 "name": "mid",
+                "market_type": "any",
                 "strategy_overrides": {
                     "pullback_lookback": 6,
                     "pullback_max_pct": 0.035,

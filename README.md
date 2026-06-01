@@ -18,9 +18,12 @@ Loopbots/
   main.py
   strategy.py
   market_data.py
+  market_regime.py
   telegram_alerts.py
   trade_manager.py
   backtester.py
+  run_backtest.py
+  news_brief.py
   config.yaml
   requirements.txt
   README.md
@@ -98,8 +101,8 @@ The default strategy looks for:
 
 The live scanner can evaluate more than one strategy mode. With the default setup in `config.yaml`, it tries:
 
-- `Short-term` first for tighter LOOP opportunities
-- `Mid-term` second for steadier continuation setups
+- `Short-term` only for tighter, sideways/range-friendly LOOP opportunities on supported alt pairs
+- `Mid-term` for steadier continuation setups and as the default fallback
 
 Whichever preset actually passes is the one shown in the Telegram alert.
 
@@ -116,7 +119,7 @@ The backtester currently simulates entries, take-profit exits, and safety exits 
 For exchange-based history testing, `run_backtest.py` supports splitting the live universe from the history source. That means you can keep `Kraken` as the real trading exchange while using deeper public candles from another exchange such as `OKX`:
 
 ```bash
-python run_backtest.py --exchange kraken --history-exchange okx --preset mid --days 60
+python run_backtest.py --exchange kraken --history-exchange okx --preset dual --days 60 --fee-pct 0.2 --starting-balance 10000 --trade-size 1000
 ```
 
 In that mode:

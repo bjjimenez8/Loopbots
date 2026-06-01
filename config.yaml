@@ -93,6 +93,25 @@ strategy:
 
 strategy_modes:
   - name: short
+    market_type: sideways
+    allowed_base_assets:
+      - DOGE
+      - LINK
+      - SOL
+      - AVAX
+      - XRP
+      - ADA
+      - BERA
+      - XMR
+    market_type_rules:
+      lookback: 96
+      min_range_width_pct: 3.0
+      max_range_width_pct: 9.0
+      max_ema_slope_pct: 0.7
+      min_support_touches: 4
+      min_resistance_touches: 4
+      min_range_position: 0.2
+      max_range_position: 0.68
     strategy_overrides:
       pullback_lookback: 5
       pullback_max_pct: 0.028
@@ -104,6 +123,7 @@ strategy_modes:
       order_distance_pct: 1.0
       order_count: 10
   - name: mid
+    market_type: any
     strategy_overrides:
       pullback_lookback: 6
       pullback_max_pct: 0.035

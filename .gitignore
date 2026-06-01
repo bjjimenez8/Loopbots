@@ -3,3 +3,5 @@ __pycache__/
 .venv/
 .env
 logs/*.log
+data/backtests/
+data/morning_brief_state.json
