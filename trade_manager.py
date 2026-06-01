@@ -27,8 +27,11 @@ class TradeManager:
     def get_active_trade(self, symbol: str) -> dict[str, Any] | None:
         return self.load_active_trades().get(symbol)
 
-    def open_trade(self, signal: Signal) -> dict[str, Any]:
+    def open_trade(self, signal: Signal) -> dict[str, Any] | None:
         active_trades = self.load_active_trades()
+        if signal.symbol in active_trades:
+            return None
+
         now = self._now()
         trade = {
             "symbol": signal.symbol,
