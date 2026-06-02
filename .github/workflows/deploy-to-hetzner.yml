@@ -1,0 +1,72 @@
+name: Deploy to Hetzner
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-loopbots
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Pull latest code on Hetzner and restart Loopbots
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy over SSH
+        env:
+          HETZNER_HOST: ${{ secrets.HETZNER_HOST }}
+          HETZNER_USER: ${{ secrets.HETZNER_USER }}
+          HETZNER_PORT: ${{ secrets.HETZNER_PORT }}
+          HETZNER_SSH_KEY: ${{ secrets.HETZNER_SSH_KEY }}
+          HETZNER_PATH: ${{ secrets.HETZNER_PATH }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${HETZNER_HOST}" ] || [ -z "${HETZNER_SSH_KEY}" ] || [ -z "${HETZNER_PATH}" ]; then
+            echo "Missing required secrets. Set HETZNER_HOST, HETZNER_SSH_KEY, and HETZNER_PATH."
+            exit 1
+          fi
+
+          HETZNER_USER="${HETZNER_USER:-root}"
+          HETZNER_PORT="${HETZNER_PORT:-22}"
+
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$HETZNER_SSH_KEY" > ~/.ssh/hetzner_deploy_key
+          chmod 600 ~/.ssh/hetzner_deploy_key
+          ssh-keyscan -p "$HETZNER_PORT" "$HETZNER_HOST" >> ~/.ssh/known_hosts
+
+          ssh -i ~/.ssh/hetzner_deploy_key -p "$HETZNER_PORT" "$HETZNER_USER@$HETZNER_HOST" "DEPLOY_PATH='$HETZNER_PATH' bash -se" <<'REMOTE'
+            set -euo pipefail
+
+            cd "$DEPLOY_PATH"
+
+            git fetch origin main
+            git reset --hard origin/main
+
+            if [ ! -d ".venv" ]; then
+              python3 -m venv .venv
+            fi
+
+            . .venv/bin/activate
+            python -m pip install --upgrade pip
+            pip install -r requirements.txt
+
+            mkdir -p data logs
+
+            if systemctl list-unit-files | grep -q '^loopbots.service'; then
+              systemctl restart loopbots
+              systemctl status loopbots --no-pager -l || true
+            elif command -v pm2 >/dev/null 2>&1; then
+              pm2 restart loopbots || pm2 start ".venv/bin/python main.py" --name loopbots --cwd "$DEPLOY_PATH"
+              pm2 save || true
+            else
+              pkill -f "$DEPLOY_PATH/.venv/bin/python main.py" || true
+              nohup "$DEPLOY_PATH/.venv/bin/python" "$DEPLOY_PATH/main.py" > "$DEPLOY_PATH/logs/loopbots.out" 2>&1 &
+              echo "Started Loopbots with nohup. Consider setting up systemd later."
+            fi
+          REMOTE
