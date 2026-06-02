@@ -12,12 +12,8 @@ from typing import Any
 @dataclass(frozen=True)
 class PaperTrackingConfig:
     enabled: bool
-    hour: int
-    minute: int
-    timezone: str
     lookback_days: int
     retention_days: int
-    state_file: str
     fee_pct: float
 
 
@@ -31,33 +27,12 @@ class PaperTracker:
         self.active_trades_path = Path(active_trades_file)
         self.trade_history_path = Path(trade_history_file)
         self.config = config
-        self.state_path = Path(config.state_file)
-        self.state_path.parent.mkdir(parents=True, exist_ok=True)
-        self._ensure_state_file()
-
-    def should_send_today(self, local_date: str) -> bool:
-        state = self._load_state()
-        return state.get("last_sent_date") != local_date
-
-    def mark_sent(self, local_date: str) -> None:
-        self.state_path.write_text(json.dumps({"last_sent_date": local_date}, indent=2), encoding="utf-8")
 
     def build_summary(self) -> str:
-        rows = self._read_history()
-        active_trades = self._read_active_trades()
-        closed_rows = [
-            row
-            for row in rows
-            if row.get("event") in {"TAKE_PROFIT", "EXIT"} and self._is_complete_closed_row(row)
-        ]
-        window_start = datetime.now(UTC) - timedelta(days=self.config.lookback_days)
-        window_rows = [
-            row
-            for row in closed_rows
-            if (event_at := self._parse_datetime(row.get("event_at", ""))) is not None and event_at >= window_start
-        ]
-        window_stats = self._stats(window_rows)
-        all_stats = self._stats(closed_rows)
+        snapshot = self.snapshot()
+        window_stats = snapshot["window_stats"]
+        all_stats = snapshot["all_stats"]
+        active_trades = snapshot["active_trades"]
 
         lines = [
             "📊 LOOPBOTS PAPER CHECK",
@@ -91,14 +66,42 @@ class PaperTracker:
 
         if active_trades:
             lines.extend(["", "Open paper alerts:"])
-            for symbol, trade in sorted(active_trades.items()):
-                preset = self._preset_name(trade)
+            for trade in active_trades:
                 lines.append(
-                    f"- {symbol} {preset} | Entry {trade.get('entry_price')} | "
+                    f"- {trade.get('symbol')} {trade.get('preset')} | Entry {trade.get('entry_price')} | "
                     f"TP {trade.get('take_profit_price')} | Stop {trade.get('safety_exit_price')}"
                 )
 
         return "\n".join(lines)
+
+    def snapshot(self) -> dict[str, Any]:
+        rows = self._read_history()
+        active_trades = self._active_trade_records(self._read_active_trades())
+        closed_rows = [
+            row
+            for row in rows
+            if row.get("event") in {"TAKE_PROFIT", "EXIT"} and self._is_complete_closed_row(row)
+        ]
+        window_start = datetime.now(UTC) - timedelta(days=self.config.lookback_days)
+        window_rows = [
+            row
+            for row in closed_rows
+            if (event_at := self._parse_datetime(row.get("event_at", ""))) is not None and event_at >= window_start
+        ]
+
+        closed_trades = [self._closed_trade_record(row) for row in closed_rows]
+        closed_trades.sort(key=lambda row: row.get("event_at", ""), reverse=True)
+
+        return {
+            "generated_at": datetime.now(UTC).isoformat(),
+            "lookback_days": self.config.lookback_days,
+            "retention_days": self.config.retention_days,
+            "fee_pct": self.config.fee_pct,
+            "window_stats": self._stats(window_rows),
+            "all_stats": self._stats(closed_rows),
+            "active_trades": active_trades,
+            "closed_trades": closed_trades,
+        }
 
     def _read_history(self) -> list[dict[str, str]]:
         if not self.trade_history_path.exists():
@@ -143,7 +146,46 @@ class PaperTracker:
             "worst_symbol_return_pct": symbol_returns.get(worst_symbol, 0.0),
         }
 
+    def _active_trade_records(self, active_trades: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+        records = []
+        for symbol, trade in sorted(active_trades.items()):
+            records.append(
+                {
+                    "symbol": symbol,
+                    "preset": self._preset_name(trade),
+                    "entry_price": self._to_float(trade.get("entry_price")),
+                    "take_profit_price": self._to_float(trade.get("take_profit_price")),
+                    "safety_exit_price": self._to_float(trade.get("safety_exit_price")),
+                    "opened_at": trade.get("opened_at", ""),
+                    "reason": trade.get("reason", ""),
+                }
+            )
+        return records
+
+    def _closed_trade_record(self, row: dict[str, str]) -> dict[str, Any]:
+        return {
+            "event": row.get("event", ""),
+            "symbol": row.get("symbol", ""),
+            "preset": self._preset_name_from_history(row),
+            "entry_price": self._to_float(row.get("entry_price")),
+            "exit_price": self._to_float(row.get("exit_price")),
+            "take_profit_price": self._to_float(row.get("take_profit_price")),
+            "safety_exit_price": self._to_float(row.get("safety_exit_price")),
+            "net_return_pct": self._net_return_pct(row),
+            "grid_cycles": int(self._to_float(row.get("grid_cycles"))),
+            "grid_net_return_pct": self._to_float(row.get("grid_net_return_pct")),
+            "price_net_return_pct": self._to_float(row.get("price_net_return_pct")),
+            "hold_hours": self._hold_hours(row),
+            "opened_at": row.get("opened_at", ""),
+            "event_at": row.get("event_at", ""),
+            "reason": row.get("reason", ""),
+            "exit_reason": row.get("exit_reason", ""),
+        }
+
     def _net_return_pct(self, row: dict[str, str]) -> float:
+        total_net = self._to_float(row.get("total_net_return_pct"))
+        if total_net:
+            return total_net
         entry = self._to_float(row.get("entry_price"))
         exit_price = self._to_float(row.get("exit_price"))
         if entry <= 0 or exit_price <= 0:
@@ -180,16 +222,17 @@ class PaperTracker:
         return str(loop_plan.get("preset_name") or loop_settings.get("preset_name") or "Mid-term")
 
     @staticmethod
+    def _preset_name_from_history(row: dict[str, str]) -> str:
+        try:
+            loop_settings = json.loads(row.get("loop_settings") or "{}")
+        except json.JSONDecodeError:
+            loop_settings = {}
+        loop_plan = loop_settings.get("loop_plan") or {}
+        return str(loop_plan.get("preset_name") or loop_settings.get("preset_name") or "Mid-term")
+
+    @staticmethod
     def _to_float(value: str | None) -> float:
         try:
             return float(value or 0.0)
         except (TypeError, ValueError):
             return 0.0
-
-    def _ensure_state_file(self) -> None:
-        if not self.state_path.exists():
-            self.state_path.write_text(json.dumps({"last_sent_date": ""}, indent=2), encoding="utf-8")
-
-    def _load_state(self) -> dict[str, str]:
-        with self.state_path.open("r", encoding="utf-8") as file:
-            return json.load(file)

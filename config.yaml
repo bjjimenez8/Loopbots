@@ -64,12 +64,14 @@ morning_brief:
 
 paper_tracking:
   enabled: true
-  hour: 20
-  minute: 0
-  timezone: America/Los_Angeles
   lookback_days: 7
-  retention_days: 90
-  state_file: data/paper_summary_state.json
+  retention_days: 30
+
+dashboard:
+  enabled: true
+  host: 127.0.0.1
+  port: 3000
+  refresh_seconds: 30
 
 pairs:
   - BTC/USDT

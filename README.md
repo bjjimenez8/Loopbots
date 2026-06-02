@@ -20,6 +20,7 @@ Loopbots/
   market_data.py
   market_regime.py
   paper_tracker.py
+  dashboard.py
   telegram_alerts.py
   trade_manager.py
   backtester.py
@@ -59,7 +60,7 @@ The bot runs one scan immediately, then repeats every 15 minutes.
 
 It also sends a small morning crypto brief every day at `8:00 AM` Pacific with a few market lines and crypto headlines.
 
-It sends a paper-trading summary every day at `8:00 PM` Pacific so you can compare the alerts against what Bitsgap would have done.
+It also starts a local paper-trading dashboard at `http://127.0.0.1:3000` so you can compare the alerts against what Bitsgap would have done.
 
 ## Alert Format
 
@@ -91,7 +92,7 @@ The bot opens one active alert per pair at a time. A pair will not send another 
 
 When take profit is reached, the trade is closed silently in history so the pair can produce future `ENTER` alerts. When the safety exit is reached, the bot sends an `EXIT` alert.
 
-The local history is only for paper tracking and tuning. By default the bot prunes paper history older than `90` days, while active alerts stay saved until they close.
+The local history is only for paper tracking and tuning. By default the bot prunes paper history older than `30` days, while active alerts stay saved until they close.
 
 ## Paper Tracking
 
@@ -101,7 +102,7 @@ Paper tracking uses the same alerts the bot sends:
 - Take profit closes it as a paper win without sending a separate Telegram exit.
 - Safety exit closes it as a paper loss and sends the normal `EXIT` alert.
 
-The daily summary shows closed trades, wins, losses, win rate, estimated net return after the fee assumption, average net per trade, average hold time, active alerts, and best/worst symbols.
+Open `http://127.0.0.1:3000` while the bot is running to see active alerts, closed paper trades, wins, losses, win rate, estimated net return after the fee assumption, average net per trade, average hold time, and best/worst symbols.
 
 ## Strategy Summary
 

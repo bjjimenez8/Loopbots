@@ -13,6 +13,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
+from dashboard import DashboardConfig, PaperDashboardServer
 from market_regime import mode_allowed
 from market_data import MarketDataClient, MarketDataConfig
 from news_brief import MorningBriefConfig, MorningBriefService
@@ -62,6 +63,7 @@ class LoopbotsApp:
         self.trade_manager = TradeManager(
             active_trades_file=str(PROJECT_ROOT / config["storage"]["active_trades_file"]),
             trade_history_file=str(PROJECT_ROOT / config["storage"]["trade_history_file"]),
+            fee_pct=float(config.get("loop_settings", {}).get("assumed_round_trip_fee_pct", 0.2)),
         )
         self.telegram = TelegramAlertClient(
             bot_token=config["telegram"]["bot_token"],
@@ -92,15 +94,24 @@ class LoopbotsApp:
             trade_history_file=str(PROJECT_ROOT / config["storage"]["trade_history_file"]),
             config=PaperTrackingConfig(
                 enabled=paper_config.get("enabled", True),
-                hour=paper_config.get("hour", 20),
-                minute=paper_config.get("minute", 0),
-                timezone=paper_config.get("timezone", config["scheduler"]["timezone"]),
                 lookback_days=paper_config.get("lookback_days", 7),
-                retention_days=paper_config.get("retention_days", 90),
-                state_file=str(PROJECT_ROOT / paper_config.get("state_file", "data/paper_summary_state.json")),
+                retention_days=paper_config.get("retention_days", 30),
                 fee_pct=float(config.get("loop_settings", {}).get("assumed_round_trip_fee_pct", 0.2)),
             ),
         )
+        dashboard_config = config.get("dashboard", {})
+        self.dashboard = PaperDashboardServer(
+            tracker=self.paper_tracker,
+            config=DashboardConfig(
+                enabled=dashboard_config.get("enabled", True),
+                host=dashboard_config.get("host", "127.0.0.1"),
+                port=int(dashboard_config.get("port", 3000)),
+                refresh_seconds=int(dashboard_config.get("refresh_seconds", 30)),
+            ),
+        )
+
+    def start_dashboard(self) -> None:
+        self.dashboard.start()
 
     async def scan_once(self) -> None:
         self.refresh_pairs()
@@ -111,6 +122,7 @@ class LoopbotsApp:
                 active_trade = self.trade_manager.get_active_trade(symbol)
 
                 if active_trade:
+                    active_trade = self.trade_manager.update_paper_grid(symbol, candles.iloc[-1]) or active_trade
                     current_price = float(candles["close"].iloc[-1])
                     take_profit_price = float(active_trade["take_profit_price"])
                     if current_price >= take_profit_price:
@@ -174,24 +186,6 @@ class LoopbotsApp:
             logging.info("Morning brief sent for %s", local_date)
         except Exception:
             logging.exception("Failed to send morning brief")
-
-    async def send_paper_summary(self) -> None:
-        if not self.paper_tracker.config.enabled:
-            return
-
-        local_now = datetime.now(ZoneInfo(self.paper_tracker.config.timezone))
-        local_date = local_now.date().isoformat()
-        if not self.paper_tracker.should_send_today(local_date):
-            return
-
-        try:
-            self._prune_paper_history()
-            message = self.paper_tracker.build_summary()
-            await self.telegram.send_paper_summary(message)
-            self.paper_tracker.mark_sent(local_date)
-            logging.info("Paper summary sent for %s", local_date)
-        except Exception:
-            logging.exception("Failed to send paper summary")
 
     def _prune_paper_history(self) -> None:
         if not self.paper_tracker.config.enabled:
@@ -296,20 +290,9 @@ async def main() -> None:
         coalesce=True,
         replace_existing=True,
     )
-    scheduler.add_job(
-        app.send_paper_summary,
-        trigger=CronTrigger(
-            hour=app.paper_tracker.config.hour,
-            minute=app.paper_tracker.config.minute,
-            timezone=app.paper_tracker.config.timezone,
-        ),
-        id="loopbots_paper_summary",
-        max_instances=1,
-        coalesce=True,
-        replace_existing=True,
-    )
     scheduler.start()
 
+    app.start_dashboard()
     await app.scan_once()
     await asyncio.Event().wait()
 
