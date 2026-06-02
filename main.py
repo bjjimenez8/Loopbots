@@ -4,6 +4,7 @@ import asyncio
 from copy import deepcopy
 from datetime import datetime
 import logging
+import os
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -24,7 +25,7 @@ from trade_manager import TradeManager
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-CONFIG_PATH = PROJECT_ROOT / "config.yaml"
+CONFIG_PATH = Path(os.environ.get("LOOPBOTS_CONFIG", PROJECT_ROOT / "config.yaml")).expanduser()
 
 
 def load_config(path: Path = CONFIG_PATH) -> dict[str, Any]:

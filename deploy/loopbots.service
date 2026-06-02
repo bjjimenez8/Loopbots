@@ -1,0 +1,15 @@
+[Unit]
+Description=Loopbots Telegram alert bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/loopbots
+Environment=LOOPBOTS_CONFIG=/etc/loopbots/config.yaml
+ExecStart=/opt/loopbots/.venv/bin/python /opt/loopbots/main.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

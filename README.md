@@ -104,6 +104,55 @@ Paper tracking uses the same alerts the bot sends:
 
 Open `http://127.0.0.1:3000` while the bot is running to see active alerts, closed paper trades, wins, losses, win rate, estimated net return after the fee assumption, average net per trade, average hold time, and best/worst symbols.
 
+## Hetzner Auto Deploy
+
+Loopbots can auto-update on Hetzner whenever `main` is pushed to GitHub.
+
+Run this once on the Hetzner server:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y git
+git clone https://github.com/bjjimenez8/Loopbots.git /opt/loopbots
+cd /opt/loopbots
+sudo bash deploy/setup_hetzner.sh
+```
+
+The setup script installs Loopbots as a `systemd` service and creates a private production config at:
+
+```text
+/etc/loopbots/config.yaml
+```
+
+Put your real Telegram token/chat ID in that server config. Do not put secrets in GitHub. The service reads that file through `LOOPBOTS_CONFIG`, while runtime data is stored under `/var/lib/loopbots` and logs under `/var/log/loopbots`.
+
+After editing the server config:
+
+```bash
+sudo systemctl restart loopbots
+sudo systemctl status loopbots
+```
+
+To make GitHub deploy automatically, add these repository secrets in GitHub:
+
+```text
+HETZNER_HOST      your server IP or hostname
+HETZNER_USER      usually root, or a sudo user
+HETZNER_SSH_KEY   private SSH key allowed to log in
+HETZNER_PORT      optional, defaults to 22
+HETZNER_PATH      optional, defaults to /opt/loopbots
+```
+
+The workflow `.github/workflows/deploy-to-hetzner.yml` will SSH into the server, pull `origin/main`, reinstall requirements, and restart the `loopbots` service.
+
+For the paper dashboard, the safest setup is to keep it bound to `127.0.0.1` and open it through an SSH tunnel:
+
+```bash
+ssh -L 3000:127.0.0.1:3000 root@YOUR_SERVER_IP
+```
+
+Then open `http://127.0.0.1:3000` on your own computer.
+
 ## Strategy Summary
 
 The default strategy looks for:

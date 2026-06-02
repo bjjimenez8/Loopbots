@@ -2,19 +2,16 @@ name: Deploy to Hetzner
 
 on:
   push:
-    branches:
-      - main
+    branches: ["main"]
   workflow_dispatch:
 
 concurrency:
-  group: deploy-loopbots
+  group: loopbots-hetzner-deploy
   cancel-in-progress: true
 
 jobs:
   deploy:
-    name: Pull latest code on Hetzner and restart Loopbots
     runs-on: ubuntu-latest
-
     steps:
       - name: Deploy over SSH
         env:
@@ -26,13 +23,11 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ -z "${HETZNER_HOST}" ] || [ -z "${HETZNER_SSH_KEY}" ] || [ -z "${HETZNER_PATH}" ]; then
-            echo "Missing required secrets. Set HETZNER_HOST, HETZNER_SSH_KEY, and HETZNER_PATH."
-            exit 1
-          fi
-
+          : "${HETZNER_HOST:?Missing HETZNER_HOST secret}"
+          : "${HETZNER_SSH_KEY:?Missing HETZNER_SSH_KEY secret}"
           HETZNER_USER="${HETZNER_USER:-root}"
           HETZNER_PORT="${HETZNER_PORT:-22}"
+          HETZNER_PATH="${HETZNER_PATH:-/opt/loopbots}"
 
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
@@ -40,33 +35,38 @@ jobs:
           chmod 600 ~/.ssh/hetzner_deploy_key
           ssh-keyscan -p "$HETZNER_PORT" "$HETZNER_HOST" >> ~/.ssh/known_hosts
 
-          ssh -i ~/.ssh/hetzner_deploy_key -p "$HETZNER_PORT" "$HETZNER_USER@$HETZNER_HOST" "DEPLOY_PATH='$HETZNER_PATH' bash -se" <<'REMOTE'
-            set -euo pipefail
+          ssh -i ~/.ssh/hetzner_deploy_key -p "$HETZNER_PORT" "$HETZNER_USER@$HETZNER_HOST" \
+            "LOOPBOTS_APP_DIR='$HETZNER_PATH' bash -s" <<'REMOTE'
+          set -euo pipefail
 
-            cd "$DEPLOY_PATH"
+          APP_DIR="${LOOPBOTS_APP_DIR:-/opt/loopbots}"
+          CONFIG_FILE="/etc/loopbots/config.yaml"
 
-            git fetch origin main
-            git reset --hard origin/main
+          cd "$APP_DIR"
+          git fetch origin main
+          git reset --hard origin/main
 
-            if [ ! -d ".venv" ]; then
-              python3 -m venv .venv
-            fi
+          python3 -m venv .venv
+          . .venv/bin/activate
+          pip install --upgrade pip
+          pip install -r requirements.txt
 
-            . .venv/bin/activate
-            python -m pip install --upgrade pip
-            pip install -r requirements.txt
+          if [ ! -f "$CONFIG_FILE" ]; then
+            echo "$CONFIG_FILE is missing. Run deploy/setup_hetzner.sh on the server first."
+            exit 1
+          fi
 
-            mkdir -p data logs
+          if grep -q "YOUR_TELEGRAM" "$CONFIG_FILE"; then
+            echo "$CONFIG_FILE still has placeholder Telegram values."
+            exit 1
+          fi
 
-            if systemctl list-unit-files | grep -q '^loopbots.service'; then
-              systemctl restart loopbots
-              systemctl status loopbots --no-pager -l || true
-            elif command -v pm2 >/dev/null 2>&1; then
-              pm2 restart loopbots || pm2 start ".venv/bin/python main.py" --name loopbots --cwd "$DEPLOY_PATH"
-              pm2 save || true
-            else
-              pkill -f "$DEPLOY_PATH/.venv/bin/python main.py" || true
-              nohup "$DEPLOY_PATH/.venv/bin/python" "$DEPLOY_PATH/main.py" > "$DEPLOY_PATH/logs/loopbots.out" 2>&1 &
-              echo "Started Loopbots with nohup. Consider setting up systemd later."
-            fi
+          if command -v sudo >/dev/null 2>&1 && [ "$(id -u)" -ne 0 ]; then
+            SUDO="sudo"
+          else
+            SUDO=""
+          fi
+
+          $SUDO systemctl restart loopbots
+          $SUDO systemctl --no-pager --full status loopbots
           REMOTE
