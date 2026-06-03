@@ -24,15 +24,13 @@ pair_discovery:
   max_pairs: 10
   require_preferred_base_assets: true
   preferred_base_assets:
-    - BTC
     - ETH
     - DOGE
-    - LINK
     - SOL
   strategy_watchlist_base_assets:
     - DOGE
-    - LINK
     - SOL
+    - ETH
   watchlist_min_quote_volume_usdt: 100000
   watchlist_min_volatility_pct: 1.2
   watchlist_max_volatility_pct: 22.0
@@ -74,10 +72,8 @@ dashboard:
   refresh_seconds: 30
 
 pairs:
-  - BTC/USDT
   - ETH/USDT
   - DOGE/USDT
-  - LINK/USDT
   - SOL/USDT
 
 strategy:
@@ -99,33 +95,10 @@ strategy:
   max_active_minutes: 180
 
 strategy_modes:
-  - name: short
-    market_type: sideways
+  - name: doge_optimized
+    market_type: any
     allowed_base_assets:
       - DOGE
-      - LINK
-      - SOL
-    market_type_rules:
-      lookback: 96
-      min_range_width_pct: 3.0
-      max_range_width_pct: 9.0
-      max_ema_slope_pct: 0.7
-      min_support_touches: 4
-      min_resistance_touches: 4
-      min_range_position: 0.2
-      max_range_position: 0.6
-    strategy_overrides:
-      pullback_lookback: 5
-      pullback_max_pct: 0.028
-      bounce_confirmation_pct: 0.0012
-      min_volume_ratio: 0.8
-      max_active_minutes: 240
-    loop_settings:
-      preset_name: Short-term
-      order_distance_pct: 1.0
-      order_count: 10
-  - name: mid
-    market_type: any
     strategy_overrides:
       pullback_lookback: 6
       pullback_max_pct: 0.035
@@ -133,8 +106,36 @@ strategy_modes:
       min_volume_ratio: 0.85
       max_active_minutes: 180
     loop_settings:
-      preset_name: Mid-term
-      order_distance_pct: 1.5
+      preset_name: Optimized DOGE
+      order_distance_pct: 1.2
+      order_count: 10
+  - name: sol_optimized
+    market_type: any
+    allowed_base_assets:
+      - SOL
+    strategy_overrides:
+      pullback_lookback: 6
+      pullback_max_pct: 0.035
+      bounce_confirmation_pct: 0.0015
+      min_volume_ratio: 0.85
+      max_active_minutes: 180
+    loop_settings:
+      preset_name: Optimized SOL
+      order_distance_pct: 1.2
+      order_count: 10
+  - name: eth_optimized
+    market_type: any
+    allowed_base_assets:
+      - ETH
+    strategy_overrides:
+      pullback_lookback: 6
+      pullback_max_pct: 0.035
+      bounce_confirmation_pct: 0.0015
+      min_volume_ratio: 0.85
+      max_active_minutes: 180
+    loop_settings:
+      preset_name: Optimized ETH
+      order_distance_pct: 2.0
       order_count: 10
 
 loop_settings:

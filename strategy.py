@@ -135,15 +135,25 @@ class LoopStrategy:
         order_distance_pct = self.order_distance_pct
         order_count = self.order_count
 
-        if order_distance_pct < 0.5 or order_count < 10 or order_count % 2 != 0:
+        if order_distance_pct < 0.5 or order_count < 10 or order_count > 40 or order_count % 2 != 0:
             return None
 
         precision = self._price_precision(price)
+        half_order_count = order_count // 2
+        half_range_pct = order_distance_pct * half_order_count
+        estimated_low_price = round(price * (1 - (half_range_pct / 100)), precision)
+        estimated_high_price = round(price * (1 + (half_range_pct / 100)), precision)
+        if estimated_low_price <= 0 or estimated_high_price <= price:
+            return None
+
         safety_exit_pct = max(order_distance_pct, (atr / price) * 100 * 0.85)
         take_profit_pct = max(order_distance_pct * 1.15, (atr / price) * 100 * 1.05)
         safety_exit_price = round(price * (1 - (safety_exit_pct / 100)), precision)
         take_profit_price = round(price * (1 + (take_profit_pct / 100)), precision)
         reward_to_risk = (take_profit_price - price) / (price - safety_exit_price) if price > safety_exit_price else 0.0
+
+        if take_profit_price > estimated_high_price:
+            return None
 
         return {
             "preset_name": self.preset_name,
@@ -151,9 +161,12 @@ class LoopStrategy:
             "take_profit_price": take_profit_price,
             "order_distance_pct": order_distance_pct,
             "order_count": order_count,
+            "estimated_low_price": estimated_low_price,
+            "estimated_high_price": estimated_high_price,
             "range_width_pct": round(raw_range_width_pct, 2),
             "range_low": round(range_low, precision),
             "range_high": round(range_high, precision),
+            "bitsgap_range_pct": round(half_range_pct * 2, 2),
             "fee_buffer_pct": round(order_distance_pct - self.assumed_round_trip_fee_pct, 2),
             "reward_to_risk": round(reward_to_risk, 2),
         }

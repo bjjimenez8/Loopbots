@@ -67,10 +67,13 @@ It also starts a local paper-trading dashboard at `http://127.0.0.1:3000` so you
 Entry alerts include:
 
 - Coin
-- Preset (`Short-term` or `Mid-term`)
+- Optimized Bitsgap LOOP preset
 - Entry price
-- Safety exit price
-- Take profit price
+- Order distance
+- Order count
+- Estimated low/high price range
+- Safety exit / manual stop-bot price
+- Take profit price target
 - Short reason
 
 Exit alerts include:
@@ -164,12 +167,13 @@ The default strategy looks for:
 - RSI in a short-term momentum range.
 - Volume near or above its short-term average.
 
-The live scanner can evaluate more than one strategy mode. With the default setup in `config.yaml`, it tries:
+The live scanner can evaluate more than one optimized strategy mode. With the default setup in `config.yaml`, it scans the Kraken-ready coins that held up best in the latest tests:
 
-- `Short-term` only for tighter, sideways/range-friendly LOOP opportunities on supported alt pairs
-- `Mid-term` for steadier continuation setups and as the default fallback
+- `DOGE/USDT`: `10` orders, `1.2%` order distance
+- `SOL/USDT`: `10` orders, `1.2%` order distance
+- `ETH/USDT`: `10` orders, `2.0%` order distance
 
-Whichever preset actually passes is the one shown in the Telegram alert.
+The settings stay inside the Bitsgap LOOP manual rules: order count must be even, between `10` and `40`, and order distance must be at least `0.5%`. The strategy also estimates the auto-generated low/high range before alerting and rejects a setup if the take-profit target would sit outside that usable range.
 
 The strategy is intentionally picky about entry location. It avoids alerts when price is too high in the recent range, because the goal is a cleaner push to take profit instead of chasing after the move already happened.
 
@@ -203,13 +207,17 @@ In that mode:
 - `--history-exchange` controls where the historical candles come from.
 - `--skip-market-validation` uses cached candles without reloading exchange markets.
 
-Latest tuned 60-day Kraken/OKX backtest on the configured basket:
+Latest optimized Kraken/OKX backtest on the configured basket, using a `0.2%` round-trip fee assumption and `$1,000` fixed paper trade size from a `$10,000` example balance:
 
-- Trades: `9`
-- Win rate: `77.78%`
-- Net return after fee assumption: `+8.53%`
-- Average net per trade: about `+0.95%`
-- Example `$10,000` account with `$1,000` per trade: `$10,085.32`
+- `365` days: `107` trades, `57.94%` win rate, `+24.80%` summed net trade return, example account ending equity `$10,247.97`
+- `120` days: `28` trades, `67.86%` win rate, `+18.05%` summed net trade return, example account ending equity `$10,180.45`
+- `60` days: `7` trades, `71.43%` win rate, `+4.81%` summed net trade return, example account ending equity `$10,048.10`
+
+Per-symbol `365` day results:
+
+- `DOGE/USDT`: `58` trades, `58.62%` win rate, `+10.47%` net return
+- `SOL/USDT`: `38` trades, `55.26%` win rate, `+7.06%` net return
+- `ETH/USDT`: `11` trades, `63.64%` win rate, `+7.28%` net return
 
 ## Important Notes
 
