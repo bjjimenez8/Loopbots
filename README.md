@@ -209,14 +209,14 @@ In that mode:
 
 Latest optimized Kraken/OKX backtest on the configured basket, using a `0.2%` round-trip fee assumption and `$1,000` fixed paper trade size from a `$10,000` example balance:
 
-- `365` days: `107` trades, `57.94%` win rate, `+24.80%` summed net trade return, example account ending equity `$10,247.97`
+- `365` days: `111` trades, `59.46%` win rate, `+31.73%` summed net trade return, example account ending equity `$10,317.35`
 - `120` days: `28` trades, `67.86%` win rate, `+18.05%` summed net trade return, example account ending equity `$10,180.45`
 - `60` days: `7` trades, `71.43%` win rate, `+4.81%` summed net trade return, example account ending equity `$10,048.10`
 
 Per-symbol `365` day results:
 
-- `DOGE/USDT`: `58` trades, `58.62%` win rate, `+10.47%` net return
-- `SOL/USDT`: `38` trades, `55.26%` win rate, `+7.06%` net return
+- `DOGE/USDT`: `63` trades, `60.32%` win rate, `+15.87%` net return
+- `SOL/USDT`: `37` trades, `56.76%` win rate, `+8.59%` net return
 - `ETH/USDT`: `11` trades, `63.64%` win rate, `+7.28%` net return
 
 ## Important Notes

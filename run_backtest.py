@@ -138,6 +138,22 @@ def _safe_symbol(symbol: str) -> str:
     return re.sub(r"[^A-Za-z0-9]+", "_", symbol).strip("_")
 
 
+def _timeframe_minutes(timeframe: str) -> int:
+    match = re.fullmatch(r"(\d+)([mhdw])", timeframe)
+    if not match:
+        return 15
+
+    amount = int(match.group(1))
+    unit = match.group(2)
+    multipliers = {
+        "m": 1,
+        "h": 60,
+        "d": 60 * 24,
+        "w": 60 * 24 * 7,
+    }
+    return amount * multipliers[unit]
+
+
 def _exchange(exchange_id: str, enable_rate_limit: bool) -> Any:
     cache_key = (exchange_id, enable_rate_limit)
     if cache_key not in _EXCHANGE_CACHE:
@@ -202,6 +218,7 @@ def fetch_candles(
         raise ValueError("exchange_id is required when exchange is not provided")
 
     cache_path = None
+    expected_rows = max(int((days * 24 * 60) / _timeframe_minutes(timeframe)), 1)
     if cache_dir is not None:
         cache_dir.mkdir(parents=True, exist_ok=True)
         cache_name = f"{resolved_exchange_id}_{_safe_symbol(symbol)}_{timeframe}_{days}d.csv"
@@ -210,7 +227,9 @@ def fetch_candles(
             cached = pd.read_csv(cache_path)
             for column in ["open", "high", "low", "close", "volume"]:
                 cached[column] = pd.to_numeric(cached[column], errors="coerce")
-            return cached.dropna().reset_index(drop=True)
+            cached = cached.dropna().reset_index(drop=True)
+            if len(cached) >= int(expected_rows * 0.98):
+                return cached
 
     if exchange is None:
         exchange = _exchange(resolved_exchange_id, True)
@@ -233,7 +252,7 @@ def fetch_candles(
             break
 
         next_since = candidate_since
-        if len(rows) > 30000:
+        if len(rows) >= expected_rows + limit:
             break
 
     df = pd.DataFrame(rows, columns=["timestamp", "open", "high", "low", "close", "volume"])
