@@ -39,27 +39,28 @@ class MorningBriefService:
     def build_brief(self) -> str:
         snapshot = self._market_snapshot()
         headlines = self._fetch_headlines()
+        variant = datetime.now(UTC).date().toordinal()
 
         lines = [
-            "Good morning.",
+            self._pick(self._openers, variant),
             "",
-            "Morning Crypto Brief",
+            self._pick(self._titles, variant),
             snapshot["mood"],
             "",
-            "Market check:",
+            self._pick(self._market_labels, variant),
         ]
         for line in snapshot["lines"]:
             lines.append(line)
 
         if headlines:
-            lines.extend(["", "Headlines:"])
+            lines.extend(["", self._pick(self._headline_labels, variant)])
             for index, headline in enumerate(headlines, start=1):
                 lines.append(f"{index}. {headline}")
 
         lines.extend(
             [
                 "",
-                "Take it easy and wait for clean setups.",
+                self._pick(self._closers, variant),
             ]
         )
         return "\n".join(lines)
@@ -80,7 +81,11 @@ class MorningBriefService:
                 green_count += 1
             lines.append(f"- {pair}: {last_price:.4f} ({pct_change:+.2f}% 24h)")
 
-        mood = "Mood: mostly green and steady." if green_count >= 2 else "Mood: mixed tape, stay patient."
+        mood_variant = datetime.now(UTC).date().toordinal()
+        if green_count >= 2:
+            mood = self._pick(self._green_moods, mood_variant)
+        else:
+            mood = self._pick(self._mixed_moods, mood_variant)
         return {"mood": mood, "lines": lines}
 
     def _fetch_headlines(self) -> list[str]:
@@ -109,3 +114,77 @@ class MorningBriefService:
     def _load_state(self) -> dict[str, str]:
         with self.state_path.open("r", encoding="utf-8") as file:
             return json.load(file)
+
+    @staticmethod
+    def _pick(options: list[str], variant: int) -> str:
+        return options[variant % len(options)]
+
+    @property
+    def _openers(self) -> list[str]:
+        return [
+            "Morning. Quick crypto check.",
+            "Good morning. Here's the tape.",
+            "Morning. Keeping it simple today.",
+            "Good morning. Crypto snapshot below.",
+            "Morning. Let's see what the market is giving us.",
+        ]
+
+    @property
+    def _titles(self) -> list[str]:
+        return [
+            "Loopbots Morning Brief",
+            "Crypto Morning Read",
+            "Morning Market Brief",
+            "Loopbots Daily Check",
+            "Crypto Setup Watch",
+        ]
+
+    @property
+    def _market_labels(self) -> list[str]:
+        return [
+            "Market check:",
+            "Major pairs:",
+            "Quick price check:",
+            "What the majors are doing:",
+            "Tape check:",
+        ]
+
+    @property
+    def _headline_labels(self) -> list[str]:
+        return [
+            "Headlines:",
+            "Crypto headlines:",
+            "News to keep on the radar:",
+            "A few headlines:",
+            "Worth noting:",
+        ]
+
+    @property
+    def _green_moods(self) -> list[str]:
+        return [
+            "Mood: mostly green and steady.",
+            "Mood: constructive, but no need to chase.",
+            "Mood: buyers are showing up.",
+            "Mood: decent bid across the majors.",
+            "Mood: leaning green for now.",
+        ]
+
+    @property
+    def _mixed_moods(self) -> list[str]:
+        return [
+            "Mood: mixed tape, stay patient.",
+            "Mood: choppy, wait for clean setups.",
+            "Mood: not one-way yet.",
+            "Mood: selective market, let the alerts come to you.",
+            "Mood: uneven action, keep risk tight.",
+        ]
+
+    @property
+    def _closers(self) -> list[str]:
+        return [
+            "No rush. Let Loopbots wait for the clean setups.",
+            "Stay patient. The good alerts can take time.",
+            "No forced trades today. Clean setup or nothing.",
+            "Keep it calm. Let the bot do the scanning.",
+            "Watch the levels, respect the stops, no chasing.",
+        ]
