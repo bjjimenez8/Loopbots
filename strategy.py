@@ -30,6 +30,9 @@ class LoopStrategy:
         self.assumed_round_trip_fee_pct = float(loop_settings.get("assumed_round_trip_fee_pct", 0.2))
 
     def analyze_entry(self, symbol: str, candles: pd.DataFrame) -> Signal:
+        if self.config.get("entry_style") == "sideways_accumulation":
+            return self._analyze_sideways_accumulation(symbol, candles)
+
         profile = self._symbol_profile(symbol)
         df = self._with_indicators(candles)
         if len(df) < self._minimum_candles:
@@ -108,6 +111,97 @@ class LoopStrategy:
             )
 
         return Signal("HOLD", symbol=symbol, price=price, reason="no entry setup")
+
+    def _analyze_sideways_accumulation(self, symbol: str, candles: pd.DataFrame) -> Signal:
+        df = self._with_indicators(candles)
+        if len(df) < self._minimum_candles:
+            return Signal("HOLD", symbol, price=float(candles["close"].iloc[-1]), reason="not enough data")
+
+        latest = df.iloc[-1]
+        previous = df.iloc[-2]
+        range_window = df.iloc[-self._range_lookback :]
+        price = float(latest["close"])
+        atr = float(latest["atr"])
+        range_low = float(range_window["low"].min())
+        range_high = float(range_window["high"].max())
+        range_span = range_high - range_low
+        if price <= 0 or range_span <= 0:
+            return Signal("HOLD", symbol=symbol, price=price, reason="invalid range")
+
+        range_width_pct = (range_span / price) * 100
+        range_position = (price - range_low) / range_span
+        ema_slope_lookback = min(24, max(3, len(df) - 1))
+        ema_slope_pct = abs((float(latest["ema_trend"]) / float(df["ema_trend"].iloc[-ema_slope_lookback]) - 1) * 100)
+        support_level = range_low + (range_span * 0.25)
+        resistance_level = range_high - (range_span * 0.25)
+        support_touches = int((range_window["low"] <= support_level).sum())
+        resistance_touches = int((range_window["high"] >= resistance_level).sum())
+
+        range_ok = (
+            float(self.config.get("sideways_min_range_width_pct", 5.0))
+            <= range_width_pct
+            <= float(self.config.get("sideways_max_range_width_pct", 22.0))
+        )
+        slope_ok = ema_slope_pct <= float(self.config.get("sideways_max_ema_slope_pct", 4.0))
+        position_ok = (
+            float(self.config.get("sideways_min_range_position", 0.15))
+            <= range_position
+            <= float(self.config.get("sideways_max_range_position", 0.62))
+        )
+        touches_ok = support_touches >= int(self.config.get("sideways_min_support_touches", 2)) and resistance_touches >= int(
+            self.config.get("sideways_min_resistance_touches", 1)
+        )
+        bounce_ok = latest["close"] >= latest["low"] * (1 + self.config["bounce_confirmation_pct"]) and latest["close"] >= previous["close"] * 0.995
+        rsi_ok = float(self.config.get("sideways_min_rsi", 35)) <= latest["rsi"] <= float(self.config.get("sideways_max_rsi", 62))
+        volume_ok = latest["volume_ratio"] >= float(self.config.get("sideways_min_volume_ratio", 0.7))
+        breakdown_ok = self._breakdown_ok(df)
+        loop_plan = self._build_loop_plan(range_window, price, atr)
+        profile = self._symbol_profile(symbol)
+        loop_ready = bool(loop_plan) and self._loop_ready(loop_plan, price, range_position, profile)
+        setup_score = self._sideways_setup_score(
+            range_ok=range_ok,
+            slope_ok=slope_ok,
+            position_ok=position_ok,
+            touches_ok=touches_ok,
+            bounce_ok=bounce_ok,
+            rsi_ok=rsi_ok,
+            volume_ok=volume_ok,
+            breakdown_ok=breakdown_ok,
+            loop_plan=loop_plan,
+            range_position=range_position,
+            range_width_pct=range_width_pct,
+        )
+        min_signal_score = float(self.config.get("min_signal_score", 0.0))
+
+        if (
+            range_ok
+            and slope_ok
+            and position_ok
+            and touches_ok
+            and bounce_ok
+            and rsi_ok
+            and volume_ok
+            and breakdown_ok
+            and loop_ready
+            and setup_score >= min_signal_score
+        ):
+            assert loop_plan is not None
+            loop_plan["setup_score"] = setup_score
+            loop_plan["range_position"] = round(range_position, 2)
+            return Signal(
+                "ENTER",
+                symbol=symbol,
+                price=price,
+                take_profit_price=loop_plan["take_profit_price"],
+                safety_exit_price=loop_plan["safety_exit_price"],
+                reason="Sideways range, lower-half entry, bounce confirmed",
+                loop_settings={
+                    **self.loop_settings,
+                    "loop_plan": loop_plan,
+                },
+            )
+
+        return Signal("HOLD", symbol=symbol, price=price, reason="no sideways setup")
 
     def analyze_exit(self, symbol: str, candles: pd.DataFrame, active_trade: dict) -> Signal:
         price = float(candles["close"].iloc[-1])
@@ -228,6 +322,41 @@ class LoopStrategy:
 
         rsi = float(latest.get("rsi", 0.0))
         if 48 <= rsi <= 62:
+            score += 5
+
+        return min(score, 100)
+
+    @staticmethod
+    def _sideways_setup_score(
+        range_ok: bool,
+        slope_ok: bool,
+        position_ok: bool,
+        touches_ok: bool,
+        bounce_ok: bool,
+        rsi_ok: bool,
+        volume_ok: bool,
+        breakdown_ok: bool,
+        loop_plan: dict | None,
+        range_position: float,
+        range_width_pct: float,
+    ) -> int:
+        score = 0
+        score += 20 if range_ok else 0
+        score += 15 if slope_ok else 0
+        score += 15 if position_ok else 0
+        score += 10 if touches_ok else 0
+        score += 10 if bounce_ok else 0
+        score += 10 if rsi_ok else 0
+        score += 8 if volume_ok else 0
+        score += 7 if breakdown_ok else 0
+
+        if loop_plan:
+            reward_to_risk = float(loop_plan.get("reward_to_risk", 0.0))
+            score += min(max(int(reward_to_risk * 5), 0), 5)
+
+        if 8 <= range_width_pct <= 18:
+            score += 5
+        if 0.25 <= range_position <= 0.5:
             score += 5
 
         return min(score, 100)

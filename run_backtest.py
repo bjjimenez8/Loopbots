@@ -108,6 +108,31 @@ DEFAULT_CONFIG: dict[str, Any] = {
 
 PRESET_OVERRIDES: dict[str, dict[str, Any]] = {
     "dual": {},
+    "sideways": {
+        "strategy": {
+            "entry_style": "sideways_accumulation",
+            "pullback_lookback": 48,
+            "bounce_confirmation_pct": 0.001,
+            "min_signal_score": 78,
+            "recent_drop_lookback": 96,
+            "max_recent_drop_pct": 14.0,
+            "sideways_min_range_width_pct": 6.0,
+            "sideways_max_range_width_pct": 24.0,
+            "sideways_max_ema_slope_pct": 5.0,
+            "sideways_min_range_position": 0.18,
+            "sideways_max_range_position": 0.62,
+            "sideways_min_support_touches": 2,
+            "sideways_min_resistance_touches": 1,
+            "sideways_min_rsi": 35,
+            "sideways_max_rsi": 64,
+            "sideways_min_volume_ratio": 0.65,
+        },
+        "loop_settings": {
+            "preset_name": "Sideways accumulation",
+            "order_distance_pct": 2.0,
+            "order_count": 10,
+        },
+    },
     "short": {
         "loop_settings": {
             "preset_name": "Short-term",
@@ -888,6 +913,7 @@ def run_loop_optimizer(
     history_exchange_id: str | None,
     days: int,
     fee_pct: float,
+    preset: str,
     cache_dir: Path | None,
     starting_balance: float,
     trade_size: float | None,
@@ -905,7 +931,7 @@ def run_loop_optimizer(
             exchange_id=exchange_id,
             days=days,
             fee_pct=fee_pct,
-            preset="dual",
+            preset=preset,
             cache_dir=cache_dir,
             starting_balance=starting_balance,
             trade_size=trade_size,
@@ -950,7 +976,7 @@ def run_loop_optimizer(
             -int(row.get("trades", 0)),
         ),
     )
-    config = apply_preset(load_public_config(), "dual")
+    config = apply_preset(load_public_config(), preset)
     optimizer = config.get("optimizer", {})
     allocation = build_allocation_plan(
         results=best_rows,
@@ -965,6 +991,7 @@ def run_loop_optimizer(
         "history_exchange": history_exchange_id or exchange_id,
         "days": days,
         "timeframe": timeframe or config["exchange"]["timeframe"],
+        "preset": preset,
         "fee_pct": fee_pct,
         "starting_balance": starting_balance,
         "trade_size": float(trade_size or config["loop_settings"]["quote_amount_usdt"]),
@@ -1121,6 +1148,7 @@ def main() -> None:
             history_exchange_id=args.history_exchange,
             days=args.days,
             fee_pct=args.fee_pct,
+            preset=args.preset,
             cache_dir=Path(args.cache_dir),
             starting_balance=args.starting_balance,
             trade_size=args.trade_size,

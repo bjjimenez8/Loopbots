@@ -166,10 +166,18 @@ class LoopbotsApp:
 
         try:
             discovered_pairs = self.market_data.discover_pairs(self.discovery_config)
-            self.pairs = discovered_pairs or list(self.fallback_pairs)
+            self.pairs = self._merge_pairs(discovered_pairs, self.fallback_pairs)
         except Exception:
             logging.exception("Failed to refresh discovered pairs, falling back to configured list")
             self.pairs = list(self.fallback_pairs)
+
+    @staticmethod
+    def _merge_pairs(primary_pairs: list[str], fallback_pairs: list[str]) -> list[str]:
+        merged_pairs = []
+        for symbol in [*primary_pairs, *fallback_pairs]:
+            if symbol not in merged_pairs:
+                merged_pairs.append(symbol)
+        return merged_pairs
 
     async def send_morning_brief(self) -> None:
         if not self.morning_brief.config.enabled:
