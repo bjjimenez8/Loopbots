@@ -71,7 +71,7 @@ Entry alerts include:
 - Entry price
 - Order distance
 - Order count
-- Estimated low/high price range
+- Auto-generated low/high range reference
 - Safety exit / manual stop-bot price
 - Take profit price target
 - Short reason
@@ -173,7 +173,7 @@ The live scanner can evaluate more than one optimized strategy mode. With the de
 - `SOL/USDT`: `10` orders, `1.2%` order distance
 - `ETH/USDT`: `10` orders, `2.0%` order distance
 
-The settings stay inside the Bitsgap LOOP manual rules: order count must be even, between `10` and `40`, and order distance must be at least `0.5%`. The strategy also estimates the auto-generated low/high range before alerting and rejects a setup if the take-profit target would sit outside that usable range.
+The settings stay inside the Bitsgap LOOP manual rules: order count must be even, between `10` and `40`, and order distance must be at least `0.5%`. Bitsgap auto-generates the low/high range; Loopbots only estimates that range as a reference before alerting and rejects a setup if the take-profit target would sit outside that usable range.
 
 The strategy is intentionally picky about entry location. It avoids alerts when price is too high in the recent range, because the goal is a cleaner push to take profit instead of chasing after the move already happened.
 
