@@ -23,7 +23,7 @@ class TelegramAlertClient:
 
         loop_plan = (signal.loop_settings or {}).get("loop_plan", {})
         message = (
-            "🚨 LOOP BOT ENTRY\n"
+            "LOOP BOT ENTRY\n"
             f"Coin: {signal.symbol}\n"
             f"Method: {(signal.loop_settings or {}).get('method_name', 'Trend pullback')}\n"
             f"Preset: {loop_plan.get('preset_name', 'Optimized')}\n"
@@ -46,7 +46,7 @@ class TelegramAlertClient:
             return
 
         message = (
-            "⚠️ LOOP BOT EXIT\n"
+            "LOOP BOT EXIT\n"
             f"Coin: {signal.symbol}\n"
             "Action: Stop loop bot / get out\n"
             f"Current Price: {signal.price}\n"
