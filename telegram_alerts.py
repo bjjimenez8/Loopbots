@@ -33,6 +33,7 @@ class TelegramAlertClient:
             f"Order Count: {loop_plan.get('order_count', 'n/a')}\n"
             f"Estimated Low Price: {loop_plan.get('estimated_low_price', 'auto')}\n"
             f"Estimated High Price: {loop_plan.get('estimated_high_price', 'auto')}\n"
+            f"Score: {loop_plan.get('setup_score', 'n/a')}/100\n"
             f"Safety Exit / Stop Bot: {signal.safety_exit_price}\n"
             f"Take Profit Price Target: {signal.take_profit_price}\n"
             f"Reason: {signal.reason}"

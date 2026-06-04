@@ -65,11 +65,35 @@ class LoopStrategy:
             <= (self.config["max_rsi"] + profile["rsi_high_buffer"])
         )
         volume_ok = latest["volume_ratio"] >= max(self.config["min_volume_ratio"] - profile["volume_buffer"], 0.6)
+        breakdown_ok = self._breakdown_ok(df)
         loop_plan = self._build_loop_plan(range_window, price, atr)
         loop_ready = bool(loop_plan) and self._loop_ready(loop_plan, price, range_position, profile)
+        setup_score = self._setup_score(
+            latest=latest,
+            trend_ok=trend_ok,
+            price_reclaimed_fast_ema=price_reclaimed_fast_ema,
+            pullback_ok=pullback_ok,
+            bounce_ok=bounce_ok,
+            rsi_ok=rsi_ok,
+            volume_ok=volume_ok,
+            loop_plan=loop_plan,
+            range_position=range_position,
+        )
+        min_signal_score = float(self.config.get("min_signal_score", 0.0))
 
-        if trend_ok and price_reclaimed_fast_ema and pullback_ok and bounce_ok and rsi_ok and volume_ok and loop_ready:
+        if (
+            trend_ok
+            and price_reclaimed_fast_ema
+            and pullback_ok
+            and bounce_ok
+            and rsi_ok
+            and volume_ok
+            and breakdown_ok
+            and loop_ready
+            and setup_score >= min_signal_score
+        ):
             assert loop_plan is not None
+            loop_plan["setup_score"] = setup_score
             return Signal(
                 "ENTER",
                 symbol=symbol,
@@ -171,6 +195,43 @@ class LoopStrategy:
             "reward_to_risk": round(reward_to_risk, 2),
         }
 
+    @staticmethod
+    def _setup_score(
+        latest: pd.Series,
+        trend_ok: bool,
+        price_reclaimed_fast_ema: bool,
+        pullback_ok: bool,
+        bounce_ok: bool,
+        rsi_ok: bool,
+        volume_ok: bool,
+        loop_plan: dict | None,
+        range_position: float,
+    ) -> int:
+        score = 0
+        score += 20 if trend_ok else 0
+        score += 10 if price_reclaimed_fast_ema else 0
+        score += 15 if pullback_ok else 0
+        score += 15 if bounce_ok else 0
+        score += 10 if rsi_ok else 0
+        score += 10 if volume_ok else 0
+
+        if loop_plan:
+            reward_to_risk = float(loop_plan.get("reward_to_risk", 0.0))
+            fee_buffer_pct = float(loop_plan.get("fee_buffer_pct", 0.0))
+            score += min(max(int(reward_to_risk * 8), 0), 10)
+            score += min(max(int(fee_buffer_pct * 5), 0), 5)
+
+        if range_position <= 0.45:
+            score += 5
+        elif range_position <= 0.6:
+            score += 3
+
+        rsi = float(latest.get("rsi", 0.0))
+        if 48 <= rsi <= 62:
+            score += 5
+
+        return min(score, 100)
+
     def _loop_ready(self, loop_plan: dict, price: float, range_position: float, profile: dict) -> bool:
         safety_exit_price = float(loop_plan["safety_exit_price"])
         order_distance_pct = float(loop_plan["order_distance_pct"])
@@ -192,6 +253,20 @@ class LoopStrategy:
             return False
 
         return safety_exit_price < price
+
+    def _breakdown_ok(self, df: pd.DataFrame) -> bool:
+        lookback = int(self.config.get("recent_drop_lookback", 24))
+        max_drop_pct = float(self.config.get("max_recent_drop_pct", 8.0))
+        if lookback <= 0 or len(df) <= lookback:
+            return True
+
+        previous_close = float(df["close"].iloc[-lookback])
+        latest_close = float(df["close"].iloc[-1])
+        if previous_close <= 0:
+            return True
+
+        recent_change_pct = ((latest_close / previous_close) - 1) * 100
+        return recent_change_pct >= -max_drop_pct
 
     @staticmethod
     def _symbol_profile(symbol: str) -> dict:

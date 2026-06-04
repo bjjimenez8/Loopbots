@@ -19,8 +19,18 @@ class TradeManager:
         self._ensure_files()
 
     def load_active_trades(self) -> dict[str, dict[str, Any]]:
-        with self.active_trades_path.open("r", encoding="utf-8") as file:
-            return json.load(file)
+        self._ensure_files()
+        try:
+            with self.active_trades_path.open("r", encoding="utf-8") as file:
+                active_trades = json.load(file)
+        except json.JSONDecodeError:
+            active_trades = {}
+            self._save_active_trades(active_trades)
+
+        if not isinstance(active_trades, dict):
+            active_trades = {}
+            self._save_active_trades(active_trades)
+        return active_trades
 
     def has_active_trade(self, symbol: str) -> bool:
         return symbol in self.load_active_trades()

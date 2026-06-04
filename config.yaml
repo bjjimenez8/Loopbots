@@ -21,16 +21,20 @@ pair_discovery:
   min_last_price: 0.05
   min_volatility_pct: 1.8
   max_volatility_pct: 18.0
-  max_pairs: 10
-  require_preferred_base_assets: true
+  max_pairs: 20
+  require_preferred_base_assets: false
   preferred_base_assets:
     - ETH
     - DOGE
     - SOL
+    - LTC
+    - ALGO
   strategy_watchlist_base_assets:
     - DOGE
     - SOL
     - ETH
+    - LTC
+    - ALGO
   watchlist_min_quote_volume_usdt: 100000
   watchlist_min_volatility_pct: 1.2
   watchlist_max_volatility_pct: 22.0
@@ -75,6 +79,8 @@ pairs:
   - ETH/USDT
   - DOGE/USDT
   - SOL/USDT
+  - LTC/USDT
+  - ALGO/USDT
 
 strategy:
   ema_fast: 9
@@ -90,9 +96,49 @@ strategy:
   bounce_confirmation_pct: 0.0015
   volume_sma_period: 20
   min_volume_ratio: 0.85
+  min_signal_score: 80
+  recent_drop_lookback: 24
+  max_recent_drop_pct: 8.0
   take_profit_atr_multiple: 1.4
   safety_exit_atr_multiple: 0.9
   max_active_minutes: 180
+
+optimizer:
+  enabled: true
+  quote_asset: USDT
+  max_pairs: 30
+  min_quote_volume_usdt: 100000
+  min_last_price: 0.05
+  min_volatility_pct: 1.8
+  max_volatility_pct: 18.0
+  loop_distances_pct:
+    - 0.8
+    - 1.0
+    - 1.2
+    - 1.5
+    - 2.0
+    - 2.5
+  order_count: 10
+  min_score: 80
+  min_allocation_trades: 3
+  max_active_bots: 4
+  max_deployed_pct: 60
+  max_coin_allocation_pct: 15
+  excluded_base_assets:
+    - USDT
+    - USDC
+    - DAI
+    - PYUSD
+    - EUR
+    - USD
+    - GBP
+    - AUD
+    - CAD
+    - JPY
+    - USDG
+    - USDE
+    - FIDD
+    - RLUSD
 
 strategy_modes:
   - name: doge_optimized
@@ -121,7 +167,7 @@ strategy_modes:
       max_active_minutes: 180
     loop_settings:
       preset_name: Optimized SOL
-      order_distance_pct: 1.2
+      order_distance_pct: 2.0
       order_count: 10
   - name: eth_optimized
     market_type: any
@@ -135,6 +181,34 @@ strategy_modes:
       max_active_minutes: 180
     loop_settings:
       preset_name: Optimized ETH
+      order_distance_pct: 2.0
+      order_count: 10
+  - name: ltc_optimized
+    market_type: any
+    allowed_base_assets:
+      - LTC
+    strategy_overrides:
+      pullback_lookback: 6
+      pullback_max_pct: 0.035
+      bounce_confirmation_pct: 0.0015
+      min_volume_ratio: 0.85
+      max_active_minutes: 180
+    loop_settings:
+      preset_name: Optimized LTC
+      order_distance_pct: 1.0
+      order_count: 10
+  - name: algo_optimized
+    market_type: any
+    allowed_base_assets:
+      - ALGO
+    strategy_overrides:
+      pullback_lookback: 6
+      pullback_max_pct: 0.035
+      bounce_confirmation_pct: 0.0015
+      min_volume_ratio: 0.85
+      max_active_minutes: 180
+    loop_settings:
+      preset_name: Optimized ALGO
       order_distance_pct: 2.0
       order_count: 10
 

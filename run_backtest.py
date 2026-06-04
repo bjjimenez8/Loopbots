@@ -164,6 +164,76 @@ def _exchange(exchange_id: str, enable_rate_limit: bool) -> Any:
     return _EXCHANGE_CACHE[cache_key]
 
 
+def _coalesce_number(*values: Any) -> float:
+    for value in values:
+        try:
+            if value is None:
+                continue
+            return float(value)
+        except (TypeError, ValueError):
+            continue
+    return 0.0
+
+
+def _quote_volume(ticker: dict[str, Any], last_price: float) -> float:
+    quote_volume = _coalesce_number(ticker.get("quoteVolume"))
+    if quote_volume > 0:
+        return quote_volume
+
+    base_volume = _coalesce_number(ticker.get("baseVolume"))
+    return base_volume * last_price if last_price > 0 else 0.0
+
+
+def discover_backtest_pairs(exchange_id: str, config: dict[str, Any], max_pairs: int | None = None) -> list[str]:
+    optimizer = config.get("optimizer", {})
+    discovery = {**config.get("pair_discovery", {}), **optimizer}
+    exchange = _exchange(exchange_id, config["exchange"].get("enable_rate_limit", True))
+    quote_asset = discovery.get("quote_asset", "USDT")
+    min_quote_volume = float(discovery.get("min_quote_volume_usdt", 1_250_000))
+    min_last_price = float(discovery.get("min_last_price", 0.05))
+    min_volatility_pct = float(discovery.get("min_volatility_pct", 1.8))
+    max_volatility_pct = float(discovery.get("max_volatility_pct", 18.0))
+    max_selected = int(max_pairs or discovery.get("max_pairs", 30))
+    excluded_bases = {base.upper() for base in discovery.get("excluded_base_assets", [])}
+    tickers = exchange.fetch_tickers()
+
+    candidates: list[dict[str, Any]] = []
+    for symbol, market in exchange.markets.items():
+        if market.get("quote") != quote_asset:
+            continue
+        if not market.get("spot", False) or not market.get("active", True):
+            continue
+
+        base_asset = str(market.get("base", "")).upper()
+        if not base_asset or base_asset in excluded_bases or base_asset.endswith(".S"):
+            continue
+
+        ticker = tickers.get(symbol) or {}
+        last_price = _coalesce_number(ticker.get("last"), ticker.get("close"), 0.0)
+        high_price = _coalesce_number(ticker.get("high"), last_price, 0.0)
+        low_price = _coalesce_number(ticker.get("low"), last_price, 0.0)
+        quote_volume = _quote_volume(ticker, last_price)
+        volatility_pct = ((high_price - low_price) / low_price) * 100 if low_price > 0 else 0.0
+
+        if quote_volume < min_quote_volume:
+            continue
+        if last_price < min_last_price or low_price <= 0:
+            continue
+        if volatility_pct < min_volatility_pct or volatility_pct > max_volatility_pct:
+            continue
+
+        candidates.append(
+            {
+                "symbol": symbol,
+                "quote_volume": quote_volume,
+                "volatility_pct": volatility_pct,
+            }
+        )
+
+    candidates.sort(key=lambda item: (-item["quote_volume"], -item["volatility_pct"], item["symbol"]))
+    return [item["symbol"] for item in candidates[:max_selected]]
+
+
 def load_public_config() -> dict[str, Any]:
     config_path = Path(__file__).resolve().parent / "config.yaml"
     try:
@@ -182,6 +252,8 @@ def load_public_config() -> dict[str, Any]:
             "strategy": loaded["strategy"],
             "loop_settings": loaded["loop_settings"],
             "strategy_modes": loaded.get("strategy_modes", DEFAULT_CONFIG["strategy_modes"]),
+            "pair_discovery": loaded.get("pair_discovery", {}),
+            "optimizer": loaded.get("optimizer", {}),
         }
     except Exception:
         return DEFAULT_CONFIG
@@ -196,6 +268,8 @@ def apply_preset(config: dict[str, Any], preset: str) -> dict[str, Any]:
         "strategy": dict(config["strategy"]),
         "loop_settings": dict(config["loop_settings"]),
         "strategy_modes": list(config.get("strategy_modes", [])),
+        "pair_discovery": dict(config.get("pair_discovery", {})),
+        "optimizer": dict(config.get("optimizer", {})),
     }
     if "strategy" in overrides:
         merged["strategy"].update(overrides["strategy"])
@@ -275,16 +349,21 @@ def run_backtest(
     trade_size: float | None = None,
     history_exchange_id: str | None = None,
     validate_markets: bool = True,
+    all_usdt_pairs: bool = False,
+    max_pairs: int | None = None,
+    loop_distances: list[float] | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     config = apply_preset(load_public_config(), preset)
     config["exchange"]["id"] = exchange_id
+    if all_usdt_pairs:
+        config["pairs"] = discover_backtest_pairs(exchange_id, config, max_pairs=max_pairs)
 
     history_exchange_name = history_exchange_id or exchange_id
     live_exchange = _exchange(exchange_id, config["exchange"]["enable_rate_limit"]) if validate_markets else None
     history_exchange = (
         _exchange(history_exchange_name, config["exchange"]["enable_rate_limit"]) if validate_markets else None
     )
-    strategies = _build_strategy_modes(config, preset)
+    strategies = _build_strategy_modes(config, preset, loop_distances=loop_distances)
     fixed_trade_size = float(trade_size if trade_size is not None else config["loop_settings"]["quote_amount_usdt"])
     mode_results = {
         mode["name"]: {
@@ -330,14 +409,18 @@ def run_backtest(
             results.append({"symbol": symbol, "status": "missing_history"})
             continue
 
-        candles = fetch_candles(
-            history_exchange,
-            symbol,
-            config["exchange"]["timeframe"],
-            days,
-            cache_dir=cache_dir,
-            exchange_id=history_exchange_name,
-        )
+        try:
+            candles = fetch_candles(
+                history_exchange,
+                symbol,
+                config["exchange"]["timeframe"],
+                days,
+                cache_dir=cache_dir,
+                exchange_id=history_exchange_name,
+            )
+        except Exception as exc:
+            results.append({"symbol": symbol, "status": f"history_error:{exc.__class__.__name__}"})
+            continue
         candles_by_symbol[symbol] = candles
         prepared_strategies = _prepare_strategy_frames(candles, strategies)
         active_trade: dict[str, Any] | None = None
@@ -421,6 +504,7 @@ def run_backtest(
                 active_trade = None
 
         trades = wins + losses
+        monthly_profit_estimate = (fixed_trade_size * (net_return_pct / 100)) / max(days / 30, 1)
         results.append(
             {
                 "symbol": symbol,
@@ -439,6 +523,8 @@ def run_backtest(
                 "grid_cycles": grid_cycles,
                 "gross_return_pct": round(gross_return_pct, 2),
                 "net_return_pct": round(net_return_pct, 2),
+                "monthly_profit_estimate": round(monthly_profit_estimate, 2),
+                "monthly_return_on_trade_size_pct": round((net_return_pct / max(days / 30, 1)), 2),
                 "avg_hold_hours": round((sum(hold_bars) / len(hold_bars) * 0.25), 2) if hold_bars else 0.0,
                 "entries_by_mode": mode_entries,
             }
@@ -492,11 +578,38 @@ def run_backtest(
         trade_size=fixed_trade_size,
     )
     summary.update(balance_summary)
+    summary["allocation"] = build_allocation_plan(
+        results=results,
+        starting_balance=starting_balance,
+        max_active_bots=int(config.get("optimizer", {}).get("max_active_bots", 4)),
+        max_deployed_pct=float(config.get("optimizer", {}).get("max_deployed_pct", 60)),
+        max_coin_allocation_pct=float(config.get("optimizer", {}).get("max_coin_allocation_pct", 15)),
+        min_trades=int(config.get("optimizer", {}).get("min_allocation_trades", 3)),
+    )
     return summary, results
 
 
-def _build_strategy_modes(config: dict[str, Any], preset: str) -> list[tuple[dict[str, Any], LoopStrategy]]:
-    if preset == "dual":
+def _build_strategy_modes(
+    config: dict[str, Any],
+    preset: str,
+    loop_distances: list[float] | None = None,
+) -> list[tuple[dict[str, Any], LoopStrategy]]:
+    if loop_distances:
+        order_count = int(config.get("optimizer", {}).get("order_count", config["loop_settings"].get("order_count", 10)))
+        modes = [
+            {
+                "name": f"loop_{str(distance).replace('.', '_')}",
+                "market_type": "any",
+                "strategy_overrides": {},
+                "loop_settings": {
+                    "preset_name": f"LOOP {distance}%",
+                    "order_distance_pct": distance,
+                    "order_count": order_count,
+                },
+            }
+            for distance in loop_distances
+        ]
+    elif preset == "dual":
         modes = config.get("strategy_modes") or DEFAULT_CONFIG["strategy_modes"]
     else:
         mode_name = preset
@@ -707,6 +820,153 @@ def _combined_trade_returns(active_trade: dict[str, Any], price: float, fee_pct:
     }
 
 
+def build_allocation_plan(
+    results: list[dict[str, Any]],
+    starting_balance: float,
+    max_active_bots: int,
+    max_deployed_pct: float,
+    max_coin_allocation_pct: float,
+    min_trades: int = 3,
+) -> dict[str, Any]:
+    ranked = [
+        row
+        for row in results
+        if row.get("status") == "ok"
+        and int(row.get("trades", 0)) >= min_trades
+        and float(row.get("monthly_profit_estimate", 0.0)) > 0
+    ]
+    ranked.sort(
+        key=lambda row: (
+            -float(row.get("monthly_profit_estimate", 0.0)),
+            -float(row.get("win_rate_pct", 0.0)),
+            -int(row.get("trades", 0)),
+        )
+    )
+
+    selected = ranked[: max(max_active_bots, 0)]
+    max_deployed = starting_balance * (max_deployed_pct / 100)
+    max_per_coin = starting_balance * (max_coin_allocation_pct / 100)
+    allocation_per_bot = min(max_deployed / len(selected), max_per_coin) if selected else 0.0
+    estimated_monthly_profit = sum(
+        allocation_per_bot * (float(row.get("monthly_return_on_trade_size_pct", 0.0)) / 100)
+        for row in selected
+    )
+
+    return {
+        "max_active_bots": max_active_bots,
+        "max_deployed": round(max_deployed, 2),
+        "allocation_per_bot": round(allocation_per_bot, 2),
+        "estimated_monthly_profit": round(estimated_monthly_profit, 2),
+        "selected": [
+            {
+                "symbol": row["symbol"],
+                "trades": row["trades"],
+                "win_rate_pct": row["win_rate_pct"],
+                "monthly_profit_estimate": row["monthly_profit_estimate"],
+                "monthly_return_on_trade_size_pct": row["monthly_return_on_trade_size_pct"],
+                "suggested_allocation": round(allocation_per_bot, 2),
+                "estimated_profit_at_allocation": round(
+                    allocation_per_bot * (float(row.get("monthly_return_on_trade_size_pct", 0.0)) / 100),
+                    2,
+                ),
+            }
+            for row in selected
+        ],
+    }
+
+
+def _parse_float_list(value: str) -> list[float]:
+    return [float(item.strip()) for item in value.split(",") if item.strip()]
+
+
+def run_loop_optimizer(
+    exchange_id: str,
+    history_exchange_id: str | None,
+    days: int,
+    fee_pct: float,
+    cache_dir: Path | None,
+    starting_balance: float,
+    trade_size: float | None,
+    validate_markets: bool,
+    all_usdt_pairs: bool,
+    max_pairs: int | None,
+    loop_distances: list[float],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    best_by_symbol: dict[str, dict[str, Any]] = {}
+    distance_summaries: list[dict[str, Any]] = []
+
+    for distance in loop_distances:
+        summary, results = run_backtest(
+            exchange_id=exchange_id,
+            days=days,
+            fee_pct=fee_pct,
+            preset="dual",
+            cache_dir=cache_dir,
+            starting_balance=starting_balance,
+            trade_size=trade_size,
+            history_exchange_id=history_exchange_id,
+            validate_markets=validate_markets,
+            all_usdt_pairs=all_usdt_pairs,
+            max_pairs=max_pairs,
+            loop_distances=[distance],
+        )
+        distance_summaries.append(
+            {
+                "distance": distance,
+                "trades": summary["trades"],
+                "win_rate_pct": summary["win_rate_pct"],
+                "portfolio_return_pct": summary["portfolio_return_pct"],
+                "max_drawdown_pct": summary["max_drawdown_pct"],
+                "estimated_monthly_profit": summary["allocation"]["estimated_monthly_profit"],
+            }
+        )
+        for row in results:
+            if row.get("status") != "ok":
+                continue
+            candidate = {**row, "best_distance_pct": distance}
+            existing = best_by_symbol.get(row["symbol"])
+            if existing is None or (
+                float(candidate.get("monthly_profit_estimate", 0.0)),
+                float(candidate.get("win_rate_pct", 0.0)),
+                int(candidate.get("trades", 0)),
+            ) > (
+                float(existing.get("monthly_profit_estimate", 0.0)),
+                float(existing.get("win_rate_pct", 0.0)),
+                int(existing.get("trades", 0)),
+            ):
+                best_by_symbol[row["symbol"]] = candidate
+
+    best_rows = sorted(
+        best_by_symbol.values(),
+        key=lambda row: (
+            -float(row.get("monthly_profit_estimate", 0.0)),
+            -float(row.get("win_rate_pct", 0.0)),
+            -int(row.get("trades", 0)),
+        ),
+    )
+    config = apply_preset(load_public_config(), "dual")
+    optimizer = config.get("optimizer", {})
+    allocation = build_allocation_plan(
+        results=best_rows,
+        starting_balance=starting_balance,
+        max_active_bots=int(optimizer.get("max_active_bots", 4)),
+        max_deployed_pct=float(optimizer.get("max_deployed_pct", 60)),
+        max_coin_allocation_pct=float(optimizer.get("max_coin_allocation_pct", 15)),
+        min_trades=int(optimizer.get("min_allocation_trades", 3)),
+    )
+    return {
+        "exchange": exchange_id,
+        "history_exchange": history_exchange_id or exchange_id,
+        "days": days,
+        "fee_pct": fee_pct,
+        "starting_balance": starting_balance,
+        "trade_size": float(trade_size or config["loop_settings"]["quote_amount_usdt"]),
+        "distances_tested": loop_distances,
+        "distance_summaries": distance_summaries,
+        "allocation": allocation,
+    }, best_rows
+
+
 def simulate_portfolio(
     candles_by_symbol: dict[str, pd.DataFrame],
     strategies: list[tuple[dict[str, Any], LoopStrategy]],
@@ -729,10 +989,26 @@ def simulate_portfolio(
 
     timeline.sort()
     max_concurrent = 0
+    peak_equity = cash_balance
+    max_drawdown_pct = 0.0
+    monthly_pnl: dict[str, float] = {}
+    current_losing_streak = 0
+    max_losing_streak = 0
+    closed_trade_returns: list[float] = []
+    last_prices: dict[str, float] = {}
 
-    for _, symbol, index in timeline:
+    def mark_to_market_equity() -> float:
+        equity = cash_balance
+        for active_symbol, trade in active_trades.items():
+            mark_price = last_prices.get(active_symbol, float(trade["entry_price"]))
+            returns = _combined_trade_returns(trade, mark_price, fee_pct)
+            equity += trade_size * (1 + (returns["net_return_pct"] / 100))
+        return equity
+
+    for timestamp, symbol, index in timeline:
         candles = candles_by_symbol[symbol]
         window = candles.iloc[: index + 1].reset_index(drop=True)
+        last_prices[symbol] = float(window["close"].iloc[-1])
 
         active_trade = active_trades.get(symbol)
         if active_trade is not None:
@@ -740,30 +1016,45 @@ def simulate_portfolio(
             price = float(window["close"].iloc[-1])
             if price >= active_trade["take_profit_price"] or price <= active_trade["safety_exit_price"]:
                 returns = _combined_trade_returns(active_trade, price, fee_pct)
-                net_multiplier = 1 + (returns["net_return_pct"] / 100)
-                cash_balance += trade_size * net_multiplier
+                trade_profit = trade_size * (returns["net_return_pct"] / 100)
+                cash_balance += trade_size + trade_profit
+                month_key = datetime.fromtimestamp(timestamp / 1000, UTC).strftime("%Y-%m")
+                monthly_pnl[month_key] = monthly_pnl.get(month_key, 0.0) + trade_profit
+                closed_trade_returns.append(returns["net_return_pct"])
+                if returns["net_return_pct"] <= 0:
+                    current_losing_streak += 1
+                    max_losing_streak = max(max_losing_streak, current_losing_streak)
+                else:
+                    current_losing_streak = 0
                 active_trades.pop(symbol, None)
-            continue
+        elif cash_balance >= trade_size:
+            _, signal = _analyze_entry_fast(symbol, candles, index, prepared_by_symbol[symbol])
+            if signal.signal_type == "ENTER":
+                cash_balance -= trade_size
+                active_trades[symbol] = {
+                    "entry_price": signal.price,
+                    "take_profit_price": float(signal.take_profit_price),
+                    "safety_exit_price": float(signal.safety_exit_price),
+                    "grid": _new_grid_state(signal, fee_pct),
+                }
+                max_concurrent = max(max_concurrent, len(active_trades))
 
-        if cash_balance < trade_size:
-            continue
+        equity = mark_to_market_equity()
+        peak_equity = max(peak_equity, equity)
+        if peak_equity > 0:
+            max_drawdown_pct = min(max_drawdown_pct, ((equity / peak_equity) - 1) * 100)
 
-        _, signal = _analyze_entry_fast(symbol, candles, index, prepared_by_symbol[symbol])
-        if signal.signal_type == "ENTER":
-            cash_balance -= trade_size
-            active_trades[symbol] = {
-                "entry_price": signal.price,
-                "take_profit_price": float(signal.take_profit_price),
-                "safety_exit_price": float(signal.safety_exit_price),
-                "grid": _new_grid_state(signal, fee_pct),
-            }
-            max_concurrent = max(max_concurrent, len(active_trades))
-
-    ending_equity = cash_balance
-    for symbol, trade in active_trades.items():
-        latest_price = float(candles_by_symbol[symbol]["close"].iloc[-1])
-        returns = _combined_trade_returns(trade, latest_price, fee_pct)
-        ending_equity += trade_size * (1 + (returns["net_return_pct"] / 100))
+    ending_equity = mark_to_market_equity()
+    monthly_returns = [
+        {
+            "month": month,
+            "profit": round(profit, 2),
+            "return_pct": round((profit / starting_balance) * 100, 2) if starting_balance else 0.0,
+        }
+        for month, profit in sorted(monthly_pnl.items())
+    ]
+    worst_month = min(monthly_returns, key=lambda row: row["profit"], default={})
+    best_month = max(monthly_returns, key=lambda row: row["profit"], default={})
 
     return {
         "ending_balance": round(cash_balance, 2),
@@ -771,6 +1062,14 @@ def simulate_portfolio(
         "portfolio_return_pct": round(((ending_equity / starting_balance) - 1) * 100, 2) if starting_balance else 0.0,
         "open_positions": len(active_trades),
         "max_concurrent_positions": max_concurrent,
+        "max_drawdown_pct": round(max_drawdown_pct, 2),
+        "avg_trade_net_return_pct": (
+            round(sum(closed_trade_returns) / len(closed_trade_returns), 2) if closed_trade_returns else 0.0
+        ),
+        "max_losing_streak": max_losing_streak,
+        "best_month": best_month,
+        "worst_month": worst_month,
+        "monthly_returns": monthly_returns,
     }
 
 
@@ -784,12 +1083,70 @@ def main() -> None:
     parser.add_argument("--cache-dir", default="data/backtests", help="Folder for cached public candle data.")
     parser.add_argument("--starting-balance", type=float, default=10000.0, help="Starting cash balance for portfolio simulation.")
     parser.add_argument("--trade-size", type=float, default=None, help="Fixed dollar size per trade. Defaults to loop quote amount.")
+    parser.add_argument("--all-usdt-pairs", action="store_true", help="Discover and test liquid spot USDT pairs from the live exchange.")
+    parser.add_argument("--max-pairs", type=int, default=None, help="Maximum discovered USDT pairs to test.")
+    parser.add_argument(
+        "--loop-distances",
+        default=None,
+        help="Comma-separated LOOP order distances to test, for example 0.8,1.0,1.2,1.5,2.0,2.5.",
+    )
+    parser.add_argument(
+        "--optimize-loop-presets",
+        action="store_true",
+        help="Run each LOOP distance separately and rank every coin by its best preset.",
+    )
     parser.add_argument(
         "--skip-market-validation",
         action="store_true",
         help="Use cached candles without reloading exchange markets; useful for fast local tuning.",
     )
     args = parser.parse_args()
+    loop_distances = _parse_float_list(args.loop_distances) if args.loop_distances else None
+
+    if args.optimize_loop_presets:
+        config = load_public_config()
+        optimizer_distances = loop_distances or [
+            float(distance) for distance in config.get("optimizer", {}).get("loop_distances_pct", [0.8, 1.0, 1.2, 1.5, 2.0, 2.5])
+        ]
+        summary, results = run_loop_optimizer(
+            exchange_id=args.exchange,
+            history_exchange_id=args.history_exchange,
+            days=args.days,
+            fee_pct=args.fee_pct,
+            cache_dir=Path(args.cache_dir),
+            starting_balance=args.starting_balance,
+            trade_size=args.trade_size,
+            validate_markets=not args.skip_market_validation,
+            all_usdt_pairs=args.all_usdt_pairs,
+            max_pairs=args.max_pairs,
+            loop_distances=optimizer_distances,
+        )
+        print("OPTIMIZER_SUMMARY")
+        for key, value in summary.items():
+            print(f"{key}={value}")
+        print("RANKED_RESULTS")
+        for row in results:
+            if row["status"] != "ok":
+                print(f"{row['symbol']}|{row['status']}")
+                continue
+            print(
+                "|".join(
+                    str(row.get(key, ""))
+                    for key in [
+                        "symbol",
+                        "best_distance_pct",
+                        "trades",
+                        "wins",
+                        "losses",
+                        "win_rate_pct",
+                        "net_return_pct",
+                        "monthly_profit_estimate",
+                        "monthly_return_on_trade_size_pct",
+                        "avg_hold_hours",
+                    ]
+                )
+            )
+        return
 
     summary, results = run_backtest(
         exchange_id=args.exchange,
@@ -801,6 +1158,9 @@ def main() -> None:
         trade_size=args.trade_size,
         history_exchange_id=args.history_exchange,
         validate_markets=not args.skip_market_validation,
+        all_usdt_pairs=args.all_usdt_pairs,
+        max_pairs=args.max_pairs,
+        loop_distances=loop_distances,
     )
     print("SUMMARY")
     for key, value in summary.items():
@@ -826,6 +1186,8 @@ def main() -> None:
                     "grid_net_return_pct",
                     "gross_return_pct",
                     "net_return_pct",
+                    "monthly_profit_estimate",
+                    "monthly_return_on_trade_size_pct",
                     "avg_hold_hours",
                 ]
             )

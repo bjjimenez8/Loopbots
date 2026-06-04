@@ -201,6 +201,14 @@ For fast local tuning with cached candles:
 python run_backtest.py --exchange kraken --history-exchange okx --preset dual --days 60 --fee-pct 0.2 --starting-balance 10000 --trade-size 1000 --skip-market-validation
 ```
 
+To test the LOOP money-allocation optimizer across the broader Kraken USDT universe:
+
+```bash
+python run_backtest.py --exchange kraken --history-exchange okx --days 60 --fee-pct 0.2 --starting-balance 10000 --trade-size 1000 --all-usdt-pairs --max-pairs 10 --optimize-loop-presets --skip-market-validation
+```
+
+The optimizer tests configured LOOP distances, ranks each coin by its best monthly dollar estimate, reports drawdown and monthly returns, and suggests a capped allocation plan. Treat one-trade winners as research only; the allocation report requires a minimum number of trades before suggesting capital.
+
 In that mode:
 
 - `--exchange` controls which symbols must exist on your real trading exchange.
