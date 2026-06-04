@@ -67,6 +67,12 @@ The same idea over a 365-day sample did not stay strong. The best profiles were 
 
 Do not turn GRID alerts live with meaningful money yet.
 
+Latest 30-day check on June 4, 2026:
+
+- DOGE no longer looks good in the current short sample.
+- BNB long/mid looked best, but only had 2 qualified starts, so the sample is too small to trust.
+- Current GRID research priority is manual Bitsgap backtesting on BNB/USDT long and mid presets, not live allocation.
+
 The current best use is research/paper/small-size testing:
 
 - Focus on 14-day GRID windows, not 3-day windows.
