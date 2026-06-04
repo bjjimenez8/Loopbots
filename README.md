@@ -209,6 +209,12 @@ python run_backtest.py --exchange kraken --history-exchange okx --days 60 --fee-
 
 The optimizer tests configured LOOP distances, ranks each coin by its best monthly dollar estimate, reports drawdown and monthly returns, and suggests a capped allocation plan. Treat one-trade winners as research only; the allocation report requires a minimum number of trades before suggesting capital.
 
+To compare a different candle timeframe without editing `config.yaml`, add `--timeframe`:
+
+```bash
+python run_backtest.py --exchange kraken --history-exchange okx --days 120 --timeframe 30m --fee-pct 0.2 --starting-balance 10000 --trade-size 1000 --all-usdt-pairs --max-pairs 15 --optimize-loop-presets --skip-market-validation
+```
+
 In that mode:
 
 - `--exchange` controls which symbols must exist on your real trading exchange.

@@ -352,9 +352,12 @@ def run_backtest(
     all_usdt_pairs: bool = False,
     max_pairs: int | None = None,
     loop_distances: list[float] | None = None,
+    timeframe: str | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     config = apply_preset(load_public_config(), preset)
     config["exchange"]["id"] = exchange_id
+    if timeframe:
+        config["exchange"]["timeframe"] = timeframe
     if all_usdt_pairs:
         config["pairs"] = discover_backtest_pairs(exchange_id, config, max_pairs=max_pairs)
 
@@ -383,6 +386,7 @@ def run_backtest(
         "history_exchange": history_exchange_name,
         "preset": preset,
         "days": days,
+        "timeframe": config["exchange"]["timeframe"],
         "fee_pct": fee_pct,
         "starting_balance": starting_balance,
         "trade_size": fixed_trade_size,
@@ -891,6 +895,7 @@ def run_loop_optimizer(
     all_usdt_pairs: bool,
     max_pairs: int | None,
     loop_distances: list[float],
+    timeframe: str | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     best_by_symbol: dict[str, dict[str, Any]] = {}
     distance_summaries: list[dict[str, Any]] = []
@@ -909,6 +914,7 @@ def run_loop_optimizer(
             all_usdt_pairs=all_usdt_pairs,
             max_pairs=max_pairs,
             loop_distances=[distance],
+            timeframe=timeframe,
         )
         distance_summaries.append(
             {
@@ -958,6 +964,7 @@ def run_loop_optimizer(
         "exchange": exchange_id,
         "history_exchange": history_exchange_id or exchange_id,
         "days": days,
+        "timeframe": timeframe or config["exchange"]["timeframe"],
         "fee_pct": fee_pct,
         "starting_balance": starting_balance,
         "trade_size": float(trade_size or config["loop_settings"]["quote_amount_usdt"]),
@@ -1077,7 +1084,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run a LOOP bot backtest report.")
     parser.add_argument("--exchange", default="kraken", help="Live exchange universe to validate symbols against.")
     parser.add_argument("--history-exchange", default=None, help="Optional history source exchange id for deeper candle data.")
-    parser.add_argument("--days", type=int, default=60, help="Number of days of 15m candles to backtest.")
+    parser.add_argument("--days", type=int, default=60, help="Number of days of candles to backtest.")
+    parser.add_argument("--timeframe", default=None, help="Override candle timeframe, for example 15m, 30m, or 1h.")
     parser.add_argument("--fee-pct", type=float, default=0.2, help="Round-trip fee assumption in percent.")
     parser.add_argument("--preset", default="dual", choices=sorted(PRESET_OVERRIDES.keys()), help="Strategy preset to test.")
     parser.add_argument("--cache-dir", default="data/backtests", help="Folder for cached public candle data.")
@@ -1120,6 +1128,7 @@ def main() -> None:
             all_usdt_pairs=args.all_usdt_pairs,
             max_pairs=args.max_pairs,
             loop_distances=optimizer_distances,
+            timeframe=args.timeframe,
         )
         print("OPTIMIZER_SUMMARY")
         for key, value in summary.items():
@@ -1161,6 +1170,7 @@ def main() -> None:
         all_usdt_pairs=args.all_usdt_pairs,
         max_pairs=args.max_pairs,
         loop_distances=loop_distances,
+        timeframe=args.timeframe,
     )
     print("SUMMARY")
     for key, value in summary.items():

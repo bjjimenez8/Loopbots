@@ -54,3 +54,15 @@ Final tuned modes:
 - Smaller LOOP distances produced more trades but worse total portfolio returns.
 - One-trade winners such as ADA, XRP, LINK, and DOT were kept out of allocation because the sample is too small.
 - This is a backtest/optimizer result, not a guarantee of live trading profit.
+
+## Timeframe Comparison
+
+The same 120-day optimizer was run on `30m` and `1h` candles to test whether higher timeframes produced cleaner LOOP setups.
+
+| Timeframe | Allocation Estimate | Best Qualified Symbols | Read |
+|---|---:|---|---|
+| 15m | $104.70/mo | DOGE, SOL, LTC, ALGO | Best tested setting |
+| 30m | $65.85/mo | ALGO, SOL, XRP, DOGE | Lower profit and weaker broad distance results |
+| 1h | $57.00/mo | DOGE, SOL | Fewer qualified symbols and worse broad distance results |
+
+Conclusion: keep live Loopbots on `15m` for now. The higher timeframes were useful to test, but they did not improve profitability for the current LOOP strategy.
