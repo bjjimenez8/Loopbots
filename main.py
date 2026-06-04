@@ -204,14 +204,26 @@ class LoopbotsApp:
             logging.info("Pruned %d old paper history rows", removed_count)
 
     def _analyze_entry(self, symbol: str, candles: Any) -> Signal:
+        entry_candidates: list[Signal] = []
         for strategy_mode in self.strategies:
             if not mode_allowed(strategy_mode["mode"], candles, symbol):
                 continue
             strategy = strategy_mode["strategy"]
             signal = strategy.analyze_entry(symbol, candles)
             if signal.signal_type == "ENTER":
-                return signal
+                entry_candidates.append(signal)
+
+        if entry_candidates:
+            return max(entry_candidates, key=self._entry_score)
         return Signal("HOLD", symbol=symbol, price=float(candles["close"].iloc[-1]), reason="no entry setup")
+
+    @staticmethod
+    def _entry_score(signal: Signal) -> tuple[float, float, float]:
+        loop_plan = (signal.loop_settings or {}).get("loop_plan", {})
+        setup_score = float(loop_plan.get("setup_score") or 0.0)
+        reward_to_risk = float(loop_plan.get("reward_to_risk") or 0.0)
+        order_distance_pct = float(loop_plan.get("order_distance_pct") or 0.0)
+        return setup_score, reward_to_risk, order_distance_pct
 
     def _build_strategies(self, config: dict[str, Any]) -> list[dict[str, Any]]:
         strategy_modes = config.get("strategy_modes") or self._default_strategy_modes()

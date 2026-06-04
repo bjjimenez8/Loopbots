@@ -25,8 +25,8 @@ class TelegramAlertClient:
         message = (
             "🚨 LOOP BOT ENTRY\n"
             f"Coin: {signal.symbol}\n"
-            f"Preset: {loop_plan.get('preset_name', 'Optimized')}\n"
             f"Method: {(signal.loop_settings or {}).get('method_name', 'Trend pullback')}\n"
+            f"Preset: {loop_plan.get('preset_name', 'Optimized')}\n"
             "Action: Start loop bot / enter trade\n"
             f"Entry: {signal.price}\n"
             "Bitsgap Setup: Manual LOOP\n"

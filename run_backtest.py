@@ -669,12 +669,15 @@ def _analyze_entry(
     candles: pd.DataFrame,
     strategies: list[tuple[dict[str, Any], LoopStrategy]],
 ) -> tuple[str, Signal]:
+    entry_candidates: list[tuple[str, Signal]] = []
     for mode, strategy in strategies:
         if not mode_allowed(mode, candles, symbol):
             continue
         signal = strategy.analyze_entry(symbol, candles)
         if signal.signal_type == "ENTER":
-            return mode["name"], signal
+            entry_candidates.append((mode["name"], signal))
+    if entry_candidates:
+        return max(entry_candidates, key=lambda item: _entry_score(item[1]))
     return "", Signal("HOLD", symbol=symbol, price=float(candles["close"].iloc[-1]), reason="no entry setup")
 
 
@@ -700,20 +703,34 @@ def _analyze_entry_fast(
     current_index: int,
     prepared_strategies: list[PreparedStrategy],
 ) -> tuple[str, Signal]:
+    raw_window = candles.iloc[: current_index + 1].reset_index(drop=True)
+    entry_candidates: list[tuple[str, Signal]] = []
     for mode, strategy, indicator_frame, positions in prepared_strategies:
         prepared_index = positions.get(current_index)
         if prepared_index is None or prepared_index < max(strategy.config["pullback_lookback"], strategy._range_lookback, 2):
             continue
-        raw_window = candles.iloc[: current_index + 1].reset_index(drop=True)
         if not mode_allowed(mode, raw_window, symbol):
             continue
         signal = _signal_from_indicators(strategy, symbol, indicator_frame.iloc[: prepared_index + 1])
         if signal.signal_type == "ENTER":
-            return mode["name"], signal
+            entry_candidates.append((mode["name"], signal))
+    if entry_candidates:
+        return max(entry_candidates, key=lambda item: _entry_score(item[1]))
     return "", Signal("HOLD", symbol=symbol, price=float(candles["close"].iloc[current_index]), reason="no entry setup")
 
 
+def _entry_score(signal: Signal) -> tuple[float, float, float]:
+    loop_plan = (signal.loop_settings or {}).get("loop_plan", {})
+    setup_score = float(loop_plan.get("setup_score") or 0.0)
+    reward_to_risk = float(loop_plan.get("reward_to_risk") or 0.0)
+    order_distance_pct = float(loop_plan.get("order_distance_pct") or 0.0)
+    return setup_score, reward_to_risk, order_distance_pct
+
+
 def _signal_from_indicators(strategy: LoopStrategy, symbol: str, df: pd.DataFrame) -> Signal:
+    if strategy.config.get("entry_style") == "sideways_accumulation":
+        return _sideways_signal_from_indicators(strategy, symbol, df)
+
     profile = strategy._symbol_profile(symbol)
     latest = df.iloc[-1]
     previous = df.iloc[-2]
@@ -745,11 +762,35 @@ def _signal_from_indicators(strategy: LoopStrategy, symbol: str, df: pd.DataFram
         <= (strategy.config["max_rsi"] + profile["rsi_high_buffer"])
     )
     volume_ok = latest["volume_ratio"] >= max(strategy.config["min_volume_ratio"] - profile["volume_buffer"], 0.6)
+    breakdown_ok = strategy._breakdown_ok(df)
     loop_plan = strategy._build_loop_plan(range_window, price, atr)
     loop_ready = bool(loop_plan) and strategy._loop_ready(loop_plan, price, range_position, profile)
+    setup_score = strategy._setup_score(
+        latest=latest,
+        trend_ok=trend_ok,
+        price_reclaimed_fast_ema=price_reclaimed_fast_ema,
+        pullback_ok=pullback_ok,
+        bounce_ok=bounce_ok,
+        rsi_ok=rsi_ok,
+        volume_ok=volume_ok,
+        loop_plan=loop_plan,
+        range_position=range_position,
+    )
+    min_signal_score = float(strategy.config.get("min_signal_score", 0.0))
 
-    if trend_ok and price_reclaimed_fast_ema and pullback_ok and bounce_ok and rsi_ok and volume_ok and loop_ready:
+    if (
+        trend_ok
+        and price_reclaimed_fast_ema
+        and pullback_ok
+        and bounce_ok
+        and rsi_ok
+        and volume_ok
+        and breakdown_ok
+        and loop_ready
+        and setup_score >= min_signal_score
+    ):
         assert loop_plan is not None
+        loop_plan["setup_score"] = setup_score
         return Signal(
             "ENTER",
             symbol=symbol,
@@ -764,6 +805,94 @@ def _signal_from_indicators(strategy: LoopStrategy, symbol: str, df: pd.DataFram
         )
 
     return Signal("HOLD", symbol=symbol, price=price, reason="no entry setup")
+
+
+def _sideways_signal_from_indicators(strategy: LoopStrategy, symbol: str, df: pd.DataFrame) -> Signal:
+    latest = df.iloc[-1]
+    previous = df.iloc[-2]
+    range_window = df.iloc[-strategy._range_lookback :]
+    price = float(latest["close"])
+    atr = float(latest["atr"])
+    range_low = float(range_window["low"].min())
+    range_high = float(range_window["high"].max())
+    range_span = range_high - range_low
+    if price <= 0 or range_span <= 0:
+        return Signal("HOLD", symbol=symbol, price=price, reason="invalid range")
+
+    range_width_pct = (range_span / price) * 100
+    range_position = (price - range_low) / range_span
+    ema_slope_lookback = min(24, max(3, len(df) - 1))
+    ema_slope_pct = abs((float(latest["ema_trend"]) / float(df["ema_trend"].iloc[-ema_slope_lookback]) - 1) * 100)
+    support_level = range_low + (range_span * 0.25)
+    resistance_level = range_high - (range_span * 0.25)
+    support_touches = int((range_window["low"] <= support_level).sum())
+    resistance_touches = int((range_window["high"] >= resistance_level).sum())
+
+    range_ok = (
+        float(strategy.config.get("sideways_min_range_width_pct", 5.0))
+        <= range_width_pct
+        <= float(strategy.config.get("sideways_max_range_width_pct", 22.0))
+    )
+    slope_ok = ema_slope_pct <= float(strategy.config.get("sideways_max_ema_slope_pct", 4.0))
+    position_ok = (
+        float(strategy.config.get("sideways_min_range_position", 0.15))
+        <= range_position
+        <= float(strategy.config.get("sideways_max_range_position", 0.62))
+    )
+    touches_ok = support_touches >= int(strategy.config.get("sideways_min_support_touches", 2)) and resistance_touches >= int(
+        strategy.config.get("sideways_min_resistance_touches", 1)
+    )
+    bounce_ok = latest["close"] >= latest["low"] * (1 + strategy.config["bounce_confirmation_pct"]) and latest["close"] >= previous["close"] * 0.995
+    rsi_ok = float(strategy.config.get("sideways_min_rsi", 35)) <= latest["rsi"] <= float(strategy.config.get("sideways_max_rsi", 62))
+    volume_ok = latest["volume_ratio"] >= float(strategy.config.get("sideways_min_volume_ratio", 0.7))
+    breakdown_ok = strategy._breakdown_ok(df)
+    loop_plan = strategy._build_loop_plan(range_window, price, atr)
+    profile = strategy._symbol_profile(symbol)
+    loop_ready = bool(loop_plan) and strategy._loop_ready(loop_plan, price, range_position, profile)
+    setup_score = strategy._sideways_setup_score(
+        range_ok=range_ok,
+        slope_ok=slope_ok,
+        position_ok=position_ok,
+        touches_ok=touches_ok,
+        bounce_ok=bounce_ok,
+        rsi_ok=rsi_ok,
+        volume_ok=volume_ok,
+        breakdown_ok=breakdown_ok,
+        loop_plan=loop_plan,
+        range_position=range_position,
+        range_width_pct=range_width_pct,
+    )
+    min_signal_score = float(strategy.config.get("min_signal_score", 0.0))
+
+    if (
+        range_ok
+        and slope_ok
+        and position_ok
+        and touches_ok
+        and bounce_ok
+        and rsi_ok
+        and volume_ok
+        and breakdown_ok
+        and loop_ready
+        and setup_score >= min_signal_score
+    ):
+        assert loop_plan is not None
+        loop_plan["setup_score"] = setup_score
+        loop_plan["range_position"] = round(range_position, 2)
+        return Signal(
+            "ENTER",
+            symbol=symbol,
+            price=price,
+            take_profit_price=loop_plan["take_profit_price"],
+            safety_exit_price=loop_plan["safety_exit_price"],
+            reason="Sideways range, lower-half entry, bounce confirmed",
+            loop_settings={
+                **strategy.loop_settings,
+                "loop_plan": loop_plan,
+            },
+        )
+
+    return Signal("HOLD", symbol=symbol, price=price, reason="no sideways setup")
 
 
 def _new_grid_state(signal: Signal, fee_pct: float) -> dict[str, Any]:

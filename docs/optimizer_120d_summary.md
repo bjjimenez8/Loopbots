@@ -95,41 +95,14 @@ Targeted sideways candidates:
 | BCH/USDT | 1.2% | 28 | 60.71% | $14.92 |
 | SOL/USDT | 2.5% | 25 | 52.00% | $11.30 |
 
-Conclusion: sideways accumulation is promising as a separate research/live-paper mode, but it is riskier than the current tuned trend strategy. It should be paper-tested before real allocation because it had a larger drawdown and longer losing streak.
+Corrected conclusion: sideways accumulation is **not live**. After the backtester was fixed to match live best-method selection, the combined sideways method lost money:
 
-## Combined Live Method
-
-The live config now includes both methods:
-
-- `Trend pullback`: the original uptrend + pullback + bounce method.
-- `Sideways accumulation`: SOON-style range chop, lower/middle range entry, wider LOOP distance.
-
-The Telegram entry alert includes a `Method:` line so each alert identifies which method fired.
-
-Final combined 120-day backtest:
-
-| Metric | Result |
+| Metric | Corrected Combined Sideways Result |
 |---|---:|
-| Trades | 168 |
-| Wins / Losses | 104 / 64 |
-| Win rate | 61.90% |
-| Portfolio return on $10,000 with $1,000 trades | 7.95% |
-| Ending equity | $10,794.79 |
-| Max drawdown | -2.67% |
-| Average net per trade | 0.47% |
-| Max losing streak | 5 |
-| Best month | $537.27 |
-| Worst month | -$93.12 |
-| Estimated monthly allocator profit | $239.55 |
+| Trades | 293 |
+| Win rate | 46.08% |
+| Portfolio return | -7.57% |
+| Max drawdown | -8.06% |
+| Max losing streak | 18 |
 
-Live methods by symbol:
-
-| Symbol | Methods |
-|---|---|
-| DOGE/USDT | Trend pullback + sideways accumulation |
-| SOL/USDT | Trend pullback only |
-| LTC/USDT | Trend pullback only |
-| ALGO/USDT | Trend pullback + sideways accumulation |
-| ETH/USDT | Trend pullback + sideways accumulation |
-| BNB/USDT | Sideways accumulation only |
-| BCH/USDT | Sideways accumulation only |
+Sideways accumulation remains research-only. The live strategy stays on the proven trend-pullback modes.
