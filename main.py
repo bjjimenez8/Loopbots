@@ -15,6 +15,7 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from dashboard import DashboardConfig, PaperDashboardServer
+from grid_watch import GridWatchService
 from market_regime import mode_allowed
 from market_data import MarketDataClient, MarketDataConfig
 from news_brief import MorningBriefConfig, MorningBriefService
@@ -70,6 +71,7 @@ class LoopbotsApp:
             bot_token=config["telegram"]["bot_token"],
             chat_id=config["telegram"]["chat_id"],
         )
+        self.grid_watch = GridWatchService.from_config(config.get("grid_watch", {}), PROJECT_ROOT)
         self.fallback_pairs = list(config["pairs"])
         self.pairs = list(self.fallback_pairs)
         morning_config = config.get("morning_brief", {})
@@ -157,7 +159,23 @@ class LoopbotsApp:
                 logging.exception("Failed to scan %s", symbol)
 
         logging.info("Scan complete")
+        await self.scan_grid_watch()
         self._prune_paper_history()
+
+    async def scan_grid_watch(self) -> None:
+        if not self.grid_watch.config.enabled:
+            return
+
+        try:
+            alerts = self.grid_watch.find_alerts()
+        except Exception:
+            logging.exception("Failed to scan GRID watch")
+            return
+
+        for alert in alerts:
+            await self.telegram.send_grid_alert(alert)
+        if alerts:
+            logging.info("Sent %d GRID watch alerts", len(alerts))
 
     def refresh_pairs(self) -> None:
         if not self.discovery_config.get("enabled", False):
