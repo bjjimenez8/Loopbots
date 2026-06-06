@@ -231,42 +231,48 @@ class LoopbotsApp:
         )
 
     def _build_no_alert_status(self, loop_diagnostics: list[dict[str, Any]]) -> str:
-        best_loop = max(loop_diagnostics, key=lambda row: row.get("score", 0), default={})
+        closest_loop = sorted(loop_diagnostics, key=lambda row: row.get("score", 0), reverse=True)[:3]
         grid_diagnostics = self.grid_watch.diagnostics() if self.grid_watch.config.enabled else []
-        grid_ready = [row for row in grid_diagnostics if row.get("ready")]
-        grid_closest = min(
+        closest_grid = sorted(
             grid_diagnostics,
             key=lambda row: (
                 abs(float(row.get("trend_return_pct", 999))),
                 abs(float(row.get("directional_efficiency", 999))),
             ),
-            default={},
-        )
-        grid_paper = self.grid_watch.paper_snapshot() if self.grid_watch.config.enabled else {}
+        )[:3]
 
         lines = [
-            "BOT STATUS",
-            "No entries right now.",
-            (
-                f"LOOP: best {best_loop.get('symbol', 'n/a')} "
-                f"{best_loop.get('score', 0)}/80"
-            ),
-            f"GRID: {len(grid_ready)}/{len(grid_diagnostics)} ready",
+            "NO ENTRY",
+            "Reason: waiting for cleaner setup.",
+            "LOOP closest:",
+            *self._format_loop_closest(closest_loop),
+            "GRID closest:",
+            *self._format_grid_closest(closest_grid),
         ]
-        if grid_closest:
-            lines.append(
-                "GRID closest: "
-                f"{grid_closest.get('symbol')} "
-                f"trend {grid_closest.get('trend_return_pct')}%, "
-                f"position {grid_closest.get('range_position')}"
-            )
-        lines.append(
-            "GRID paper: "
-            f"{grid_paper.get('closed', 0)} closed, "
-            f"WR {float(grid_paper.get('win_rate_pct', 0.0)):.2f}%"
-        )
-        lines.append("Reason: waiting for cleaner setup.")
         return "\n".join(lines)
+
+    @staticmethod
+    def _format_loop_closest(rows: list[dict[str, Any]]) -> list[str]:
+        if not rows:
+            return ["- none"]
+        return [
+            f"- {row.get('symbol', 'n/a')} {row.get('score', 0)}/80 needs {row.get('reason', 'cleaner setup')}"
+            for row in rows
+        ]
+
+    @staticmethod
+    def _format_grid_closest(rows: list[dict[str, Any]]) -> list[str]:
+        if not rows:
+            return ["- none"]
+        return [
+            (
+                f"- {row.get('symbol', 'n/a')} "
+                f"trend {row.get('trend_return_pct', 'n/a')}%, "
+                f"position {row.get('range_position', 'n/a')} "
+                f"needs {row.get('reason', 'cleaner range')}"
+            )
+            for row in rows
+        ]
 
     def refresh_pairs(self) -> None:
         if not self.discovery_config.get("enabled", False):
@@ -387,17 +393,16 @@ class LoopbotsApp:
             range_position=range_position,
         )
         failures = [
-            name
-            for name, passed in {
+            label
+            for label, passed in {
                 "trend": trend_ok,
-                "reclaim": price_reclaimed_fast_ema,
+                "EMA reclaim": price_reclaimed_fast_ema,
                 "pullback": pullback_ok,
                 "bounce": bounce_ok,
-                "rsi": rsi_ok,
+                "RSI": rsi_ok,
                 "volume": volume_ok,
                 "breakdown": breakdown_ok,
-                "loop_ready": loop_ready,
-                "score": score >= float(strategy.config.get("min_signal_score", 0.0)),
+                "range/TP": loop_ready,
             }.items()
             if not passed
         ]

@@ -74,7 +74,7 @@ GRID alerts are manual Bitsgap setup alerts. The bot does not create the bot for
 
 GRID alerts are paper-tracked separately in `data/grid_trade_history.csv`. When the bot sends a GRID entry, it records the paper entry. When it sends a GRID exit, it records the paper result, return percent, and win/loss.
 
-If no LOOP or GRID alerts fire, Loopbots can send a cooldown-limited `BOT STATUS` message showing the best LOOP score, how many GRID setups are ready, and current GRID paper results.
+If no LOOP or GRID alerts fire, Loopbots can send a cooldown-limited `NO ENTRY` message showing the reason and the closest LOOP and GRID coins.
 
 The GRID feature only alerts on filtered sideways setups that were profitable in research. It is not guaranteed profit, and live Bitsgap results can differ from the local backtester.
 

@@ -107,13 +107,14 @@ This is not a full Bitsgap fill-by-fill recreation. It tracks whether the alert 
 If no LOOP or GRID alerts fire, Loopbots can send a cooldown-limited status message:
 
 ```text
-BOT STATUS
-No entries right now.
-LOOP: best DOGE/USDT 49/80
-GRID: 0/6 ready
-GRID closest: BTC/USDT trend -2.1%, position 0.45
-GRID paper: 3 closed, WR 66.67%
+NO ENTRY
 Reason: waiting for cleaner setup.
+LOOP closest:
+- ETH/USDT 69/80 needs trend, bounce, volume
+- DOGE/USDT 49/80 needs trend, volume
+GRID closest:
+- BTC/USDT trend -2.1%, position 0.45 needs cleaner range
+- XRP/USDT trend -3.8%, position 0.35 needs cleaner range
 ```
 
 The default cooldown is `6` hours.
