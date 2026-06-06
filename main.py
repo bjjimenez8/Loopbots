@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import asyncio
 from copy import deepcopy
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
+import json
 import logging
 import os
 from pathlib import Path
@@ -72,6 +73,9 @@ class LoopbotsApp:
             chat_id=config["telegram"]["chat_id"],
         )
         self.grid_watch = GridWatchService.from_config(config.get("grid_watch", {}), PROJECT_ROOT)
+        self.status_config = config.get("status_report", {})
+        self.status_state_path = PROJECT_ROOT / self.status_config.get("state_file", "data/status_report_state.json")
+        self.status_state_path.parent.mkdir(parents=True, exist_ok=True)
         self.fallback_pairs = list(config["pairs"])
         self.pairs = list(self.fallback_pairs)
         morning_config = config.get("morning_brief", {})
@@ -119,6 +123,9 @@ class LoopbotsApp:
     async def scan_once(self) -> None:
         self.refresh_pairs()
         logging.info("Starting scan for %d pairs", len(self.pairs))
+        loop_entry_count = 0
+        loop_exit_count = 0
+        loop_diagnostics: list[dict[str, Any]] = []
         for symbol in self.pairs:
             try:
                 candles = self.market_data.fetch_ohlcv(symbol)
@@ -148,39 +155,118 @@ class LoopbotsApp:
                     if exit_signal.signal_type == "EXIT":
                         self.trade_manager.close_trade(exit_signal, exit_signal.reason)
                         await self.telegram.send_exit_alert(exit_signal)
+                        loop_exit_count += 1
                     continue
 
+                loop_diagnostics.extend(self._loop_diagnostics(symbol, candles))
                 entry_signal = self._analyze_entry(symbol, candles)
                 if entry_signal.signal_type == "ENTER":
                     opened_trade = self.trade_manager.open_trade(entry_signal)
                     if opened_trade:
                         await self.telegram.send_enter_alert(entry_signal)
+                        loop_entry_count += 1
             except Exception:
                 logging.exception("Failed to scan %s", symbol)
 
         logging.info("Scan complete")
-        await self.scan_grid_watch()
+        grid_counts = await self.scan_grid_watch()
+        total_alerts = loop_entry_count + loop_exit_count + grid_counts["entries"] + grid_counts["exits"]
+        if total_alerts == 0:
+            await self.maybe_send_no_alert_status(loop_diagnostics)
         self._prune_paper_history()
 
-    async def scan_grid_watch(self) -> None:
+    async def scan_grid_watch(self) -> dict[str, int]:
+        counts = {"entries": 0, "exits": 0}
         if not self.grid_watch.config.enabled:
-            return
+            return counts
 
         try:
             exit_alerts = self.grid_watch.find_exit_alerts()
             alerts = self.grid_watch.find_alerts()
         except Exception:
             logging.exception("Failed to scan GRID watch")
-            return
+            return counts
 
         for alert in exit_alerts:
             await self.telegram.send_grid_exit_alert(alert)
         for alert in alerts:
             await self.telegram.send_grid_alert(alert)
+        counts["entries"] = len(alerts)
+        counts["exits"] = len(exit_alerts)
         if exit_alerts:
             logging.info("Sent %d GRID exit alerts", len(exit_alerts))
         if alerts:
             logging.info("Sent %d GRID watch alerts", len(alerts))
+        return counts
+
+    async def maybe_send_no_alert_status(self, loop_diagnostics: list[dict[str, Any]]) -> None:
+        if not self.status_config.get("enabled", True):
+            return
+        interval_hours = float(self.status_config.get("interval_hours", 6))
+        if not self._status_report_due(interval_hours):
+            return
+
+        message = self._build_no_alert_status(loop_diagnostics)
+        await self.telegram.send_status_report(message)
+        self._mark_status_report_sent()
+
+    def _status_report_due(self, interval_hours: float) -> bool:
+        if interval_hours <= 0:
+            return True
+        if not self.status_state_path.exists():
+            return True
+        try:
+            state = json.loads(self.status_state_path.read_text(encoding="utf-8"))
+            last_sent_at = datetime.fromisoformat(str(state.get("last_sent_at", "")))
+        except (ValueError, json.JSONDecodeError, OSError):
+            return True
+        if last_sent_at.tzinfo is None:
+            last_sent_at = last_sent_at.replace(tzinfo=UTC)
+        return datetime.now(UTC) - last_sent_at >= timedelta(hours=interval_hours)
+
+    def _mark_status_report_sent(self) -> None:
+        self.status_state_path.write_text(
+            json.dumps({"last_sent_at": datetime.now(UTC).isoformat()}, indent=2),
+            encoding="utf-8",
+        )
+
+    def _build_no_alert_status(self, loop_diagnostics: list[dict[str, Any]]) -> str:
+        best_loop = max(loop_diagnostics, key=lambda row: row.get("score", 0), default={})
+        grid_diagnostics = self.grid_watch.diagnostics() if self.grid_watch.config.enabled else []
+        grid_ready = [row for row in grid_diagnostics if row.get("ready")]
+        grid_closest = min(
+            grid_diagnostics,
+            key=lambda row: (
+                abs(float(row.get("trend_return_pct", 999))),
+                abs(float(row.get("directional_efficiency", 999))),
+            ),
+            default={},
+        )
+        grid_paper = self.grid_watch.paper_snapshot() if self.grid_watch.config.enabled else {}
+
+        lines = [
+            "BOT STATUS",
+            "No entries right now.",
+            (
+                f"LOOP: best {best_loop.get('symbol', 'n/a')} "
+                f"{best_loop.get('score', 0)}/80"
+            ),
+            f"GRID: {len(grid_ready)}/{len(grid_diagnostics)} ready",
+        ]
+        if grid_closest:
+            lines.append(
+                "GRID closest: "
+                f"{grid_closest.get('symbol')} "
+                f"trend {grid_closest.get('trend_return_pct')}%, "
+                f"position {grid_closest.get('range_position')}"
+            )
+        lines.append(
+            "GRID paper: "
+            f"{grid_paper.get('closed', 0)} closed, "
+            f"WR {float(grid_paper.get('win_rate_pct', 0.0)):.2f}%"
+        )
+        lines.append("Reason: waiting for cleaner setup.")
+        return "\n".join(lines)
 
     def refresh_pairs(self) -> None:
         if not self.discovery_config.get("enabled", False):
@@ -239,6 +325,89 @@ class LoopbotsApp:
         if entry_candidates:
             return max(entry_candidates, key=self._entry_score)
         return Signal("HOLD", symbol=symbol, price=float(candles["close"].iloc[-1]), reason="no entry setup")
+
+    def _loop_diagnostics(self, symbol: str, candles: Any) -> list[dict[str, Any]]:
+        results = []
+        for strategy_mode in self.strategies:
+            if not mode_allowed(strategy_mode["mode"], candles, symbol):
+                continue
+            strategy = strategy_mode["strategy"]
+            try:
+                results.append(self._loop_strategy_diagnostic(symbol, candles, strategy_mode, strategy))
+            except Exception:
+                logging.exception("Failed to build LOOP diagnostics for %s", symbol)
+        return results
+
+    @staticmethod
+    def _loop_strategy_diagnostic(symbol: str, candles: Any, strategy_mode: dict[str, Any], strategy: LoopStrategy) -> dict[str, Any]:
+        df = strategy._with_indicators(candles)
+        if len(df) < strategy._minimum_candles:
+            return {"symbol": symbol, "mode": strategy_mode["mode"].get("name", ""), "score": 0, "reason": "not enough data"}
+
+        latest = df.iloc[-1]
+        previous = df.iloc[-2]
+        recent = df.iloc[-strategy.config["pullback_lookback"] :]
+        range_window = df.iloc[-strategy._range_lookback :]
+        price = float(latest["close"])
+        atr = float(latest["atr"])
+        range_low = float(range_window["low"].min())
+        range_high = float(range_window["high"].max())
+        range_span = max(range_high - range_low, 0.0)
+        range_position = ((price - range_low) / range_span) if range_span else 1.0
+        profile = strategy._symbol_profile(symbol)
+
+        trend_ok = latest["ema_fast"] > latest["ema_slow"] > latest["ema_trend"] and latest["ema_trend"] > previous["ema_trend"]
+        price_reclaimed_fast_ema = latest["close"] > latest["ema_fast"] * profile["ema_reclaim_buffer"]
+        recent_high = float(recent["high"].max())
+        pullback_pct = (recent_high - price) / recent_high if recent_high else 0.0
+        pullback_ok = strategy.config["pullback_min_pct"] <= pullback_pct <= strategy.config["pullback_max_pct"]
+        bounce_ok = (
+            latest["close"] >= latest["low"] * (1 + (strategy.config["bounce_confirmation_pct"] * profile["bounce_multiplier"]))
+            and latest["close"] >= previous["close"] * profile["previous_close_buffer"]
+            and latest["close"] >= latest["open"] * profile["open_buffer"]
+        )
+        rsi_ok = (
+            (strategy.config["min_rsi"] - profile["rsi_low_buffer"])
+            <= latest["rsi"]
+            <= (strategy.config["max_rsi"] + profile["rsi_high_buffer"])
+        )
+        volume_ok = latest["volume_ratio"] >= max(strategy.config["min_volume_ratio"] - profile["volume_buffer"], 0.6)
+        breakdown_ok = strategy._breakdown_ok(df)
+        loop_plan = strategy._build_loop_plan(range_window, price, atr)
+        loop_ready = bool(loop_plan) and strategy._loop_ready(loop_plan, price, range_position, profile)
+        score = strategy._setup_score(
+            latest=latest,
+            trend_ok=trend_ok,
+            price_reclaimed_fast_ema=price_reclaimed_fast_ema,
+            pullback_ok=pullback_ok,
+            bounce_ok=bounce_ok,
+            rsi_ok=rsi_ok,
+            volume_ok=volume_ok,
+            loop_plan=loop_plan,
+            range_position=range_position,
+        )
+        failures = [
+            name
+            for name, passed in {
+                "trend": trend_ok,
+                "reclaim": price_reclaimed_fast_ema,
+                "pullback": pullback_ok,
+                "bounce": bounce_ok,
+                "rsi": rsi_ok,
+                "volume": volume_ok,
+                "breakdown": breakdown_ok,
+                "loop_ready": loop_ready,
+                "score": score >= float(strategy.config.get("min_signal_score", 0.0)),
+            }.items()
+            if not passed
+        ]
+        return {
+            "symbol": symbol,
+            "mode": strategy_mode["mode"].get("name", ""),
+            "score": score,
+            "price": price,
+            "reason": ", ".join(failures) if failures else "READY",
+        }
 
     @staticmethod
     def _entry_score(signal: Signal) -> tuple[float, float, float]:

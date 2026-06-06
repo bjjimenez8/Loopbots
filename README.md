@@ -29,6 +29,7 @@ Loopbots/
   config.yaml
   requirements.txt
   README.md
+  docs/
   data/
   logs/
 ```
@@ -61,6 +62,23 @@ The bot runs one scan immediately, then repeats every 15 minutes.
 It also sends a small morning crypto brief every day at `8:00 AM` Pacific with a few market lines and crypto headlines.
 
 It also starts a local paper-trading dashboard at `http://127.0.0.1:3000` so you can compare the alerts against what Bitsgap would have done.
+
+## GRID Bots
+
+Loopbots also has a live GRID watch feature for selected Kraken `USDT` pairs.
+
+GRID alerts are manual Bitsgap setup alerts. The bot does not create the bot for you. It sends only the fields needed to create or stop a GRID bot:
+
+- `GRID BOT ENTRY`: coin, exchange, low price, high price, grid step, grid levels, trailing up, pump protection, stop loss, take profit.
+- `GRID BOT EXIT`: coin, exchange, current price, and whether the exit is take profit or stop loss.
+
+GRID alerts are paper-tracked separately in `data/grid_trade_history.csv`. When the bot sends a GRID entry, it records the paper entry. When it sends a GRID exit, it records the paper result, return percent, and win/loss.
+
+If no LOOP or GRID alerts fire, Loopbots can send a cooldown-limited `BOT STATUS` message showing the best LOOP score, how many GRID setups are ready, and current GRID paper results.
+
+The GRID feature only alerts on filtered sideways setups that were profitable in research. It is not guaranteed profit, and live Bitsgap results can differ from the local backtester.
+
+See [docs/grid-research.md](docs/grid-research.md) for the live watchlist, alert format, filter rules, and honest profitability notes.
 
 ## Alert Format
 

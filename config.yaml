@@ -84,6 +84,7 @@ grid_watch:
   filter_lookback_days: 14
   cooldown_days: 14
   state_file: data/grid_watch_state.json
+  history_file: data/grid_trade_history.csv
   take_profit_pct: 5
   stop_loss_pct: 5
   setups:
@@ -159,6 +160,11 @@ grid_watch:
       historical_worst_drawdown_pct: -6.78
       historical_alerts_per_month: 2.05
       score: 68
+
+status_report:
+  enabled: true
+  interval_hours: 6
+  state_file: data/status_report_state.json
 
 pairs:
   - ETH/USDT

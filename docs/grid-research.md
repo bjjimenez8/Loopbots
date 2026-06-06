@@ -1,103 +1,177 @@
-# GRID Bot Research
+# GRID Bots
 
-This is a research lane only. It is not part of the live Telegram LOOP alerts yet.
+GRID bots are a live watch feature inside Loopbots.
 
-## What Was Tested
+The bot does not auto-trade. It scans Kraken, waits for historically tested sideways GRID setups, and sends Telegram alerts with the exact Bitsgap fields to enter manually.
 
-The research backtester approximates Bitsgap-style spot GRID bots using quote-sized USDT orders, based on the screenshots:
+## What It Does
 
-| Preset | Approx range around launch | Levels |
-| --- | ---: | ---: |
-| Short-term | -6.5% / +7.5% | 35 |
-| Mid-term | -14% / +17% | 50 |
-| Long-term | -25% / +35% | 80 |
+- Watches selected Kraken `USDT` spot pairs.
+- Uses `1h` candles.
+- Looks for sideways/range-bound price action.
+- Avoids obvious breakdowns and strong one-way moves.
+- Sends a `GRID BOT ENTRY` alert when a setup passes the filter.
+- Tracks that GRID alert after it is sent.
+- Sends a `GRID BOT EXIT` alert when the watched setup hits take profit or stop loss.
+- Records GRID paper entries and exits in `data/grid_trade_history.csv`.
+- Sends cooldown-limited no-alert status reports when no setups fire.
 
-Test assumptions:
+## Live Watchlist
 
-- 0.1% fee per filled order.
-- Grid range is created around the launch price.
-- Quote currency order sizing is used.
-- Optional take-profit and stop-loss can be simulated on total bot PNL.
-- Trailing Up, Pump Protection, and exact Bitsgap internal execution are not fully replicated yet.
+These are the current Kraken GRID setups in `config.yaml`:
 
-Official Bitsgap references used:
+| Coin | Range | Levels | Historical win rate | Avg 14d return | Worst drawdown | Expected alerts |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `LINK/USDT` | -5% / +35% | 20 | 72% | +2.12% | -8.95% | 1.03/mo |
+| `XRP/USDT` | -5% / +35% | 20 | 66.67% | +1.52% | -9.05% | 1.23/mo |
+| `LTC/USDT` | -3% / +35% | 20 | 64.1% | +1.49% | -11.52% | 1.6/mo |
+| `SOL/USDT` | -8% / +17% | 10 | 64.29% | +1.32% | -8.99% | 1.15/mo |
+| `AVAX/USDT` | -25% / +17% | 10 | 66.67% | +0.86% | -7.96% | 0.99/mo |
+| `BTC/USDT` | -25% / +17% | 20 | 70% | +0.53% | -6.78% | 2.05/mo |
 
-- https://bitsgap.com/blog/grid-bot-sideways-how-to-profit-on-market-uncertainty-and-stagnation
-- https://bitsgap.com/id/helpdesk/article/10038646989340-Menyesuaikan-Pengaturan-Tingkat-Lanjut-GRID-Bot-Bitsgap
+These are not random coins. They were added because the filtered backtest looked better than the other Kraken pairs tested. Coins that did not hold up were left out.
 
-## Current Findings
+## Entry Alert
 
-Fixed GRID tests can look profitable over a favorable recent window, but they fail badly when price trends down through the range.
+The Telegram entry alert is intentionally short. It only shows the fields needed to create the GRID bot in Bitsgap:
 
-Recent 120-day fixed 15m examples:
-
-| Pair | Preset | Total PNL | Max DD |
-| --- | --- | ---: | ---: |
-| ALGO/USDT | Mid | +13.99% | -23.53% |
-| DOGE/USDT | Mid | +13.24% | -20.27% |
-| LINK/USDT | Mid | +10.42% | -21.24% |
-
-Those are not enough by themselves because the one-year fixed test was negative on BTC, ETH, ALGO, DOGE, and LINK.
-
-## Better Test: Rolling Launches
-
-The better test launches a fresh GRID bot repeatedly, then measures whether the setup works across many possible start dates.
-
-Best recent 120-day setup tested:
-
-- Timeframe: 15m
-- Hold window: 14 days
-- Launch filter: strict sideways
-- Take profit: +5%
-- Stop loss: -5%
-
-Top recent results:
-
-| Pair | Preset | Starts | Win rate | Avg 14d | Monthly estimate | P10 return | Worst return |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| DOGE/USDT | Long | 17 | 70.59% | +2.70% | +5.78% | -1.75% | -5.04% |
-| DOGE/USDT | Mid | 17 | 76.47% | +2.52% | +5.40% | -1.33% | -5.06% |
-| LINK/USDT | Long | 24 | 66.67% | +1.61% | +3.44% | -5.26% | -5.62% |
-| BNB/USDT | Long | 21 | 85.71% | +1.50% | +3.21% | -5.02% | -5.17% |
-| BTC/USDT | Long | 19 | 68.42% | +1.43% | +3.07% | -2.55% | -5.16% |
-
-The same idea over a 365-day sample did not stay strong. The best profiles were low-return and still had uncomfortable downside. That means this is not proven enough for real size yet.
-
-## Honest Recommendation
-
-Do not turn GRID alerts live with meaningful money yet.
-
-Latest 30-day check on June 4, 2026:
-
-- DOGE no longer looks good in the current short sample.
-- BNB long/mid looked best, but only had 2 qualified starts, so the sample is too small to trust.
-- Current GRID research priority is manual Bitsgap backtesting on BNB/USDT long and mid presets, not live allocation.
-
-The current best use is research/paper/small-size testing:
-
-- Focus on 14-day GRID windows, not 3-day windows.
-- Prefer long or mid presets, not short presets.
-- Only consider strict sideways launches.
-- Test TP/SL around +5%/-5% and +8%/-3% in Bitsgap's own backtester.
-- Keep Trailing Up and Pump Protection on when testing in Bitsgap, but remember this local simulator does not fully model them yet.
-
-For income expectations:
-
-- Recent 120-day filtered GRID math could show roughly 3%-6% monthly on selected bot capital.
-- The longer 365-day test does not prove that edge.
-- At $5,000 per bot, a proven 1%-2% monthly edge is only $50-$100 per bot per month.
-- A 3k-5k monthly target would require either much more capital, a stronger proven edge, or both.
-
-## Commands
-
-Recent strict filtered GRID scan:
-
-```powershell
-python run_grid_backtest.py --days 120 --timeframe 15m --investment 1000 --fee-pct 0.1 --history-exchange okx --all-usdt-pairs --max-pairs 15 --rolling --hold-days 14 --step-days 2 --launch-filter strict-sideways --take-profit-pct 5 --stop-loss-pct 5
+```text
+GRID BOT ENTRY
+Coin: LINK/USDT
+Exchange: Kraken
+Low Price: 18.25
+High Price: 24.02
+Grid Step: 1.5%
+Grid Levels: 20
+Trailing Up: On
+Pump Protection: On
+Stop Loss: -5%
+Take Profit: +5%
 ```
 
-Longer honesty check:
+When this alert appears, create a manual Bitsgap GRID bot with those settings.
+
+## Exit Alert
+
+The bot tracks GRID entries after alerting. If price reaches the configured take-profit or stop-loss level, it sends:
+
+```text
+GRID BOT EXIT
+Coin: LINK/USDT
+Exchange: Kraken
+Action: Stop grid bot
+Current Price: 20.42
+Reason: Take Profit
+```
+
+or:
+
+```text
+GRID BOT EXIT
+Coin: LINK/USDT
+Exchange: Kraken
+Action: Stop grid bot
+Current Price: 17.10
+Reason: Stop Loss
+```
+
+When this alert appears, stop the matching manual Bitsgap GRID bot.
+
+## Paper Tracking
+
+GRID paper tracking starts when a `GRID BOT ENTRY` alert is sent.
+
+It records:
+
+- Coin.
+- Preset.
+- Entry price.
+- Low/high range.
+- Grid step.
+- Grid levels.
+- TP/SL.
+- Exit price.
+- Exit reason.
+- Paper return percent.
+
+The history file is:
+
+```text
+data/grid_trade_history.csv
+```
+
+This is not a full Bitsgap fill-by-fill recreation. It tracks whether the alert hit the watched take-profit or stop-loss first. That is the live proof needed before trusting bigger capital.
+
+## No-Alert Status
+
+If no LOOP or GRID alerts fire, Loopbots can send a cooldown-limited status message:
+
+```text
+BOT STATUS
+No entries right now.
+LOOP: best DOGE/USDT 49/80
+GRID: 0/6 ready
+GRID closest: BTC/USDT trend -2.1%, position 0.45
+GRID paper: 3 closed, WR 66.67%
+Reason: waiting for cleaner setup.
+```
+
+The default cooldown is `6` hours.
+
+## Profitability
+
+This feature is built to only alert on setups that were historically profitable in the filtered GRID research.
+
+Honest answer: it is not guaranteed profit.
+
+What is proven so far:
+
+- The live GRID watchlist is based on profitable filtered backtests.
+- The filter avoids many bad sideways-looking setups.
+- The alerts are selective, so it may send zero alerts in bad conditions.
+- The best current historical setup is `LINK/USDT`.
+
+What is not proven yet:
+
+- Real live Bitsgap execution can differ from the local simulator.
+- Fees, spread, slippage, and trailing behavior can change results.
+- A profitable backtest can stop working in a new market regime.
+- This is not enough by itself to reliably make `$3k-$5k/month` without larger capital or a stronger live edge.
+
+Use GRID alerts as a controlled live test first. The goal is to build live proof, not blindly force trades.
+
+## How The Filter Works
+
+The GRID scanner checks the last `14` days and requires:
+
+- Trend return between `-5%` and `+8%`.
+- Range size between `5%` and `25%`.
+- Low directional efficiency, meaning price is moving around instead of trending hard.
+- Current price sitting inside the range, not at the top or bottom edge.
+- No active GRID alert already open for that exact setup.
+- No recent duplicate alert inside the cooldown window.
+
+## Backtesting
+
+The research tool is:
 
 ```powershell
-python run_grid_backtest.py --days 365 --timeframe 15m --investment 1000 --fee-pct 0.1 --history-exchange okx --symbols BTC/USDT,ETH/USDT,ALGO/USDT,DOGE/USDT,LINK/USDT --rolling --hold-days 14 --step-days 3 --launch-filter strict-sideways
+python run_grid_backtest.py
 ```
+
+Example Kraken optimizer command:
+
+```powershell
+python run_grid_backtest.py --exchange kraken --history-exchange okx --days 730 --timeframe 1h --investment 5000 --fee-pct 0.1 --symbols LINK/USDT,XRP/USDT,LTC/USDT,SOL/USDT,AVAX/USDT,BTC/USDT --optimize-grid --hold-days 14 --step-days 5 --launch-filter strict-sideways --take-profit-pct 5 --stop-loss-pct 5 --optimizer-lower-pcts 3,5,8,14,25 --optimizer-upper-pcts 7.5,17,35 --optimizer-levels 10,20,50 --min-rolling-starts 20 --min-win-rate-pct 55 --min-avg-return-pct 0 --min-p10-return-pct -7 --min-avg-monthly-pct 0.1 --top-setups-per-symbol 3
+```
+
+The backtester is useful for research and ranking, but Bitsgap's exact internal execution is not perfectly replicated.
+
+## Files
+
+- `grid_watch.py`: live GRID scanner, state tracking, entry/exit detection.
+- `telegram_alerts.py`: GRID entry and exit Telegram message format.
+- `config.yaml`: live GRID watchlist and setup settings.
+- `run_grid_backtest.py`: GRID research and optimizer CLI.
+- `data/grid_watch_state.json`: local GRID alert state.
+- `data/grid_trade_history.csv`: GRID paper tracking history.

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 import logging
 from dataclasses import dataclass
@@ -42,6 +43,7 @@ class GridWatchConfig:
     filter_lookback_days: float
     cooldown_days: float
     state_file: str
+    history_file: str
     setups: list[GridSetup]
 
 
@@ -53,7 +55,10 @@ class GridWatchService:
         exchange_class = getattr(ccxt, config.exchange_id)
         self.exchange = exchange_class({"enableRateLimit": True})
         self._state_path = Path(config.state_file)
+        self._history_path = Path(config.history_file)
         self._state_path.parent.mkdir(parents=True, exist_ok=True)
+        self._history_path.parent.mkdir(parents=True, exist_ok=True)
+        self._ensure_history_file()
 
     @classmethod
     def from_config(cls, raw_config: dict[str, Any], project_root: Path) -> GridWatchService:
@@ -77,6 +82,7 @@ class GridWatchService:
             for item in raw_config.get("setups", [])
         ]
         state_file = str(project_root / raw_config.get("state_file", "data/grid_watch_state.json"))
+        history_file = str(project_root / raw_config.get("history_file", "data/grid_trade_history.csv"))
         return cls(
             GridWatchConfig(
                 enabled=bool(raw_config.get("enabled", False)),
@@ -87,6 +93,7 @@ class GridWatchService:
                 filter_lookback_days=float(raw_config.get("filter_lookback_days", 14.0)),
                 cooldown_days=float(raw_config.get("cooldown_days", 14.0)),
                 state_file=state_file,
+                history_file=history_file,
                 setups=setups,
             )
         )
@@ -121,6 +128,7 @@ class GridWatchService:
                 "preset_name": setup.preset_name,
                 "active_grid": self._build_active_record(alert, now),
             }
+            self._append_history(self._build_entry_history_row(alert, now))
 
         if alerts:
             self._save_state(state)
@@ -161,7 +169,9 @@ class GridWatchService:
             if not exit_reason:
                 continue
 
-            exit_alerts.append(self._build_exit_alert(setup, current_price, exit_reason))
+            exit_alert = self._build_exit_alert(setup, active_grid, current_price, exit_reason)
+            exit_alerts.append(exit_alert)
+            self._append_history(self._build_exit_history_row(active_grid, exit_alert))
             state_item.pop("active_grid", None)
             state_item["last_exit_at"] = datetime.now(UTC).isoformat()
             state_item["last_exit_reason"] = exit_reason
@@ -171,6 +181,70 @@ class GridWatchService:
         if changed:
             self._save_state(state)
         return exit_alerts
+
+    def diagnostics(self) -> list[dict[str, Any]]:
+        if not self.config.enabled:
+            return []
+
+        state = self._load_state()
+        results: list[dict[str, Any]] = []
+        for setup in self.config.setups:
+            key = self._state_key(setup)
+            state_item = state.get(key)
+            active = self._has_active_grid(state_item)
+            cooldown = self._in_cooldown(state_item)
+            try:
+                candles = self._fetch_candles(setup.symbol)
+                status = self._sideways_status(candles)
+            except Exception as exc:
+                LOGGER.exception("Failed to build GRID diagnostics for %s", setup.symbol)
+                results.append(
+                    {
+                        "symbol": setup.symbol,
+                        "ready": False,
+                        "active": active,
+                        "cooldown": cooldown,
+                        "reason": f"data error: {exc}",
+                    }
+                )
+                continue
+
+            reasons = []
+            if active:
+                reasons.append("active")
+            if cooldown:
+                reasons.append("cooldown")
+            reasons.extend(status["reasons"])
+            ready = not active and not cooldown and status["passes"]
+            results.append(
+                {
+                    "symbol": setup.symbol,
+                    "ready": ready,
+                    "active": active,
+                    "cooldown": cooldown,
+                    "reason": "READY" if ready else "; ".join(reasons),
+                    **status,
+                }
+            )
+        return results
+
+    def paper_snapshot(self) -> dict[str, Any]:
+        rows = self._read_history()
+        closed_rows = [row for row in rows if row.get("event") in {"GRID_TAKE_PROFIT", "GRID_STOP_LOSS"}]
+        active_count = sum(1 for row in rows if row.get("event") == "GRID_ENTRY") - len(closed_rows)
+        wins = sum(1 for row in closed_rows if row.get("event") == "GRID_TAKE_PROFIT")
+        losses = sum(1 for row in closed_rows if row.get("event") == "GRID_STOP_LOSS")
+        net_returns = [_to_float(row.get("net_return_pct")) for row in closed_rows]
+        return {
+            "entries": sum(1 for row in rows if row.get("event") == "GRID_ENTRY"),
+            "closed": len(closed_rows),
+            "active": max(active_count, 0),
+            "wins": wins,
+            "losses": losses,
+            "win_rate_pct": (wins / len(closed_rows) * 100) if closed_rows else 0.0,
+            "net_return_pct": sum(net_returns),
+            "avg_net_return_pct": (sum(net_returns) / len(closed_rows)) if closed_rows else 0.0,
+        }
 
     def _fetch_candles(self, symbol: str) -> pd.DataFrame:
         rows = self.exchange.fetch_ohlcv(symbol, timeframe=self.config.timeframe, limit=self.config.candle_limit)
@@ -184,32 +258,46 @@ class GridWatchService:
         return df.dropna().reset_index(drop=True)
 
     def _passes_strict_sideways(self, candles: pd.DataFrame) -> bool:
+        return bool(self._sideways_status(candles)["passes"])
+
+    def _sideways_status(self, candles: pd.DataFrame) -> dict[str, Any]:
         if candles.empty:
-            return False
+            return {"passes": False, "reasons": ["no candles"]}
 
         cutoff = candles["timestamp"].iloc[-1] - pd.Timedelta(days=self.config.filter_lookback_days)
         lookback = candles[candles["timestamp"] >= cutoff]
         if len(lookback) < 20:
-            return False
+            return {"passes": False, "reasons": ["not enough candles"]}
 
         first_close = float(lookback["close"].iloc[0])
         current_close = float(lookback["close"].iloc[-1])
         high_price = float(lookback["high"].max())
         low_price = float(lookback["low"].min())
         if first_close <= 0 or current_close <= 0 or low_price <= 0 or high_price <= low_price:
-            return False
+            return {"passes": False, "reasons": ["invalid range"]}
 
         trend_return_pct = ((current_close / first_close) - 1) * 100
         range_pct = ((high_price / low_price) - 1) * 100
         directional_efficiency = abs(trend_return_pct) / max(range_pct, 0.01)
         range_position = (current_close - low_price) / (high_price - low_price)
-
-        return (
-            -5 <= trend_return_pct <= 8
-            and 5 <= range_pct <= 25
-            and directional_efficiency <= 0.40
-            and 0.20 <= range_position <= 0.80
-        )
+        reasons = []
+        if not -5 <= trend_return_pct <= 8:
+            reasons.append(f"trend {trend_return_pct:.2f}%")
+        if not 5 <= range_pct <= 25:
+            reasons.append(f"range {range_pct:.2f}%")
+        if directional_efficiency > 0.40:
+            reasons.append(f"directional {directional_efficiency:.2f}")
+        if not 0.20 <= range_position <= 0.80:
+            reasons.append(f"position {range_position:.2f}")
+        return {
+            "passes": not reasons,
+            "reasons": reasons,
+            "trend_return_pct": round(trend_return_pct, 2),
+            "range_pct": round(range_pct, 2),
+            "directional_efficiency": round(directional_efficiency, 2),
+            "range_position": round(range_position, 2),
+            "current_price": current_close,
+        }
 
     def _build_alert(self, setup: GridSetup, candles: pd.DataFrame) -> dict[str, Any]:
         current_price = float(candles["close"].iloc[-1])
@@ -259,13 +347,25 @@ class GridWatchService:
             "take_profit_price": alert["take_profit_price"],
         }
 
-    @staticmethod
-    def _build_exit_alert(setup: GridSetup, current_price: float, exit_reason: str) -> dict[str, Any]:
+    def _build_exit_alert(
+        self,
+        setup: GridSetup,
+        active_grid: dict[str, Any],
+        current_price: float,
+        exit_reason: str,
+    ) -> dict[str, Any]:
+        entry_price = float(active_grid.get("entry_price") or 0.0)
+        gross_return_pct = ((current_price / entry_price) - 1) * 100 if entry_price > 0 else 0.0
         return {
             "symbol": setup.symbol,
             "exchange": "Kraken",
             "current_price": _fmt_price(current_price),
             "exit_reason": exit_reason,
+            "entry_price": _fmt_price(entry_price),
+            "gross_return_pct": round(gross_return_pct, 4),
+            "net_return_pct": round(gross_return_pct, 4),
+            "opened_at": str(active_grid.get("started_at", "")),
+            "event_at": datetime.now(UTC).isoformat(),
         }
 
     @staticmethod
@@ -305,6 +405,84 @@ class GridWatchService:
         with self._state_path.open("w", encoding="utf-8") as file:
             json.dump(state, file, indent=2, sort_keys=True)
 
+    def _ensure_history_file(self) -> None:
+        if self._history_path.exists():
+            return
+        with self._history_path.open("w", newline="", encoding="utf-8") as file:
+            writer = csv.DictWriter(file, fieldnames=self._history_fields)
+            writer.writeheader()
+
+    def _append_history(self, row: dict[str, Any]) -> None:
+        normalized = {field: row.get(field, "") for field in self._history_fields}
+        with self._history_path.open("a", newline="", encoding="utf-8") as file:
+            writer = csv.DictWriter(file, fieldnames=self._history_fields)
+            writer.writerow(normalized)
+
+    def _read_history(self) -> list[dict[str, str]]:
+        if not self._history_path.exists():
+            return []
+        with self._history_path.open("r", newline="", encoding="utf-8") as file:
+            return list(csv.DictReader(file))
+
+    @property
+    def _history_fields(self) -> list[str]:
+        return [
+            "event",
+            "event_at",
+            "symbol",
+            "preset_name",
+            "exchange",
+            "entry_price",
+            "exit_price",
+            "low_price",
+            "high_price",
+            "grid_step_pct",
+            "levels",
+            "take_profit_pct",
+            "stop_loss_pct",
+            "gross_return_pct",
+            "net_return_pct",
+            "opened_at",
+            "exit_reason",
+        ]
+
+    @staticmethod
+    def _build_entry_history_row(alert: dict[str, Any], event_at: str) -> dict[str, Any]:
+        return {
+            "event": "GRID_ENTRY",
+            "event_at": event_at,
+            "symbol": alert.get("symbol", ""),
+            "preset_name": alert.get("preset_name", ""),
+            "exchange": alert.get("exchange", ""),
+            "entry_price": alert.get("entry_price", ""),
+            "low_price": alert.get("low_price", ""),
+            "high_price": alert.get("high_price", ""),
+            "grid_step_pct": alert.get("grid_step_pct", ""),
+            "levels": alert.get("levels", ""),
+            "take_profit_pct": alert.get("take_profit_pct", ""),
+            "stop_loss_pct": alert.get("stop_loss_pct", ""),
+            "opened_at": event_at,
+        }
+
+    @staticmethod
+    def _build_exit_history_row(active_grid: dict[str, Any], exit_alert: dict[str, Any]) -> dict[str, Any]:
+        event = "GRID_TAKE_PROFIT" if exit_alert.get("exit_reason") == "Take Profit" else "GRID_STOP_LOSS"
+        return {
+            "event": event,
+            "event_at": exit_alert.get("event_at", ""),
+            "symbol": active_grid.get("symbol", ""),
+            "preset_name": active_grid.get("preset_name", ""),
+            "exchange": exit_alert.get("exchange", ""),
+            "entry_price": active_grid.get("entry_price", ""),
+            "exit_price": exit_alert.get("current_price", ""),
+            "low_price": active_grid.get("low_price", ""),
+            "high_price": active_grid.get("high_price", ""),
+            "gross_return_pct": exit_alert.get("gross_return_pct", ""),
+            "net_return_pct": exit_alert.get("net_return_pct", ""),
+            "opened_at": active_grid.get("started_at", ""),
+            "exit_reason": exit_alert.get("exit_reason", ""),
+        }
+
 
 def _fmt_number(value: float) -> str:
     return f"{value:.2f}".rstrip("0").rstrip(".")
@@ -316,3 +494,10 @@ def _fmt_price(value: float) -> str:
     if value >= 1:
         return f"{value:.4f}".rstrip("0").rstrip(".")
     return f"{value:.8f}".rstrip("0").rstrip(".")
+
+
+def _to_float(value: Any) -> float:
+    try:
+        return float(value or 0.0)
+    except (TypeError, ValueError):
+        return 0.0

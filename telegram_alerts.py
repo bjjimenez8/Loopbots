@@ -86,6 +86,9 @@ class TelegramAlertClient:
     async def send_morning_brief(self, message: str) -> None:
         await self._send(message)
 
+    async def send_status_report(self, message: str) -> None:
+        await self._send(message)
+
     async def _send(self, message: str) -> None:
         if not self.enabled or self.bot is None:
             LOGGER.warning("Telegram disabled. Alert not sent:\n%s", message)
