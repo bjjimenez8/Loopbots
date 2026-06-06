@@ -58,6 +58,17 @@ class TelegramAlertClient:
         )
         await self._send(message)
 
+    async def send_grid_exit_alert(self, grid_plan: dict[str, Any]) -> None:
+        message = (
+            "GRID BOT EXIT\n"
+            f"Coin: {grid_plan.get('symbol', 'n/a')}\n"
+            f"Exchange: {grid_plan.get('exchange', 'Kraken')}\n"
+            "Action: Stop grid bot\n"
+            f"Current Price: {grid_plan.get('current_price', 'n/a')}\n"
+            f"Reason: {grid_plan.get('exit_reason', 'n/a')}"
+        )
+        await self._send(message)
+
     async def send_exit_alert(self, signal: Signal) -> None:
         if signal.signal_type != "EXIT":
             return

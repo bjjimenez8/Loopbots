@@ -99,7 +99,8 @@ class GridWatchService:
         alerts: list[dict[str, Any]] = []
         for setup in self.config.setups:
             key = self._state_key(setup)
-            if self._in_cooldown(state.get(key)):
+            state_item = state.get(key)
+            if self._has_active_grid(state_item) or self._in_cooldown(state_item):
                 continue
 
             try:
@@ -113,15 +114,63 @@ class GridWatchService:
 
             alert = self._build_alert(setup, candles)
             alerts.append(alert)
+            now = datetime.now(UTC).isoformat()
             state[key] = {
-                "last_alert_at": datetime.now(UTC).isoformat(),
+                "last_alert_at": now,
                 "symbol": setup.symbol,
                 "preset_name": setup.preset_name,
+                "active_grid": self._build_active_record(alert, now),
             }
 
         if alerts:
             self._save_state(state)
         return alerts
+
+    def find_exit_alerts(self) -> list[dict[str, Any]]:
+        if not self.config.enabled:
+            return []
+
+        state = self._load_state()
+        exit_alerts: list[dict[str, Any]] = []
+        changed = False
+        for setup in self.config.setups:
+            key = self._state_key(setup)
+            state_item = state.get(key)
+            if not isinstance(state_item, dict):
+                continue
+
+            active_grid = state_item.get("active_grid")
+            if not isinstance(active_grid, dict):
+                continue
+
+            try:
+                candles = self._fetch_candles(setup.symbol)
+            except Exception:
+                LOGGER.exception("Failed to fetch GRID exit candles for %s", setup.symbol)
+                continue
+
+            current_price = float(candles["close"].iloc[-1])
+            take_profit_price = float(active_grid.get("take_profit_price") or 0)
+            stop_loss_price = float(active_grid.get("stop_loss_price") or 0)
+            exit_reason = ""
+            if take_profit_price > 0 and current_price >= take_profit_price:
+                exit_reason = "Take Profit"
+            elif stop_loss_price > 0 and current_price <= stop_loss_price:
+                exit_reason = "Stop Loss"
+
+            if not exit_reason:
+                continue
+
+            exit_alerts.append(self._build_exit_alert(setup, current_price, exit_reason))
+            state_item.pop("active_grid", None)
+            state_item["last_exit_at"] = datetime.now(UTC).isoformat()
+            state_item["last_exit_reason"] = exit_reason
+            state[key] = state_item
+            changed = True
+
+        if changed:
+            self._save_state(state)
+        return exit_alerts
 
     def _fetch_candles(self, symbol: str) -> pd.DataFrame:
         rows = self.exchange.fetch_ohlcv(symbol, timeframe=self.config.timeframe, limit=self.config.candle_limit)
@@ -166,6 +215,8 @@ class GridWatchService:
         current_price = float(candles["close"].iloc[-1])
         low_price = current_price * (1 - setup.lower_pct / 100)
         high_price = current_price * (1 + setup.upper_pct / 100)
+        stop_loss_price = current_price * (1 - setup.stop_loss_pct / 100)
+        take_profit_price = current_price * (1 + setup.take_profit_pct / 100)
         grid_step_pct = (setup.lower_pct + setup.upper_pct) / setup.levels
         estimated_profit = self.config.investment_usdt * (setup.historical_monthly_pct / 100)
         return {
@@ -173,9 +224,12 @@ class GridWatchService:
             "method_name": "Kraken GRID",
             "preset_name": setup.preset_name,
             "exchange": "Kraken",
+            "entry_price": current_price,
             "investment_usdt": _fmt_number(self.config.investment_usdt),
             "low_price": _fmt_price(low_price),
             "high_price": _fmt_price(high_price),
+            "stop_loss_price": stop_loss_price,
+            "take_profit_price": take_profit_price,
             "grid_step_pct": _fmt_number(grid_step_pct),
             "levels": setup.levels,
             "order_size_currency": "USDT",
@@ -191,6 +245,32 @@ class GridWatchService:
             "historical_win_rate_pct": _fmt_number(setup.historical_win_rate_pct),
             "historical_alerts_per_month": _fmt_number(setup.historical_alerts_per_month),
         }
+
+    @staticmethod
+    def _build_active_record(alert: dict[str, Any], started_at: str) -> dict[str, Any]:
+        return {
+            "symbol": alert["symbol"],
+            "preset_name": alert["preset_name"],
+            "started_at": started_at,
+            "entry_price": alert["entry_price"],
+            "low_price": alert["low_price"],
+            "high_price": alert["high_price"],
+            "stop_loss_price": alert["stop_loss_price"],
+            "take_profit_price": alert["take_profit_price"],
+        }
+
+    @staticmethod
+    def _build_exit_alert(setup: GridSetup, current_price: float, exit_reason: str) -> dict[str, Any]:
+        return {
+            "symbol": setup.symbol,
+            "exchange": "Kraken",
+            "current_price": _fmt_price(current_price),
+            "exit_reason": exit_reason,
+        }
+
+    @staticmethod
+    def _has_active_grid(state_item: Any) -> bool:
+        return isinstance(state_item, dict) and isinstance(state_item.get("active_grid"), dict)
 
     def _in_cooldown(self, state_item: Any) -> bool:
         if not isinstance(state_item, dict):

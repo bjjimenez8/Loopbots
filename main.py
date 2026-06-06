@@ -167,13 +167,18 @@ class LoopbotsApp:
             return
 
         try:
+            exit_alerts = self.grid_watch.find_exit_alerts()
             alerts = self.grid_watch.find_alerts()
         except Exception:
             logging.exception("Failed to scan GRID watch")
             return
 
+        for alert in exit_alerts:
+            await self.telegram.send_grid_exit_alert(alert)
         for alert in alerts:
             await self.telegram.send_grid_alert(alert)
+        if exit_alerts:
+            logging.info("Sent %d GRID exit alerts", len(exit_alerts))
         if alerts:
             logging.info("Sent %d GRID watch alerts", len(alerts))
 
