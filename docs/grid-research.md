@@ -117,7 +117,7 @@ GRID closest:
 - XRP/USDT trend -3.8%, position 0.35 needs cleaner range
 ```
 
-The default cooldown is `6` hours.
+The status is sent at most once per day after `8:00 PM` Pacific, and only when no real LOOP or GRID alert fired on that scan.
 
 ## Profitability
 

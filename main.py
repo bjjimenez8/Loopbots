@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from copy import deepcopy
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 import json
 import logging
 import os
@@ -202,31 +202,39 @@ class LoopbotsApp:
     async def maybe_send_no_alert_status(self, loop_diagnostics: list[dict[str, Any]]) -> None:
         if not self.status_config.get("enabled", True):
             return
-        interval_hours = float(self.status_config.get("interval_hours", 6))
-        if not self._status_report_due(interval_hours):
+        hour = int(self.status_config.get("hour", 20))
+        minute = int(self.status_config.get("minute", 0))
+        timezone = str(self.status_config.get("timezone", "America/Los_Angeles"))
+        if not self._status_report_due(hour, minute, timezone):
             return
 
         message = self._build_no_alert_status(loop_diagnostics)
         await self.telegram.send_status_report(message)
-        self._mark_status_report_sent()
+        self._mark_status_report_sent(timezone)
 
-    def _status_report_due(self, interval_hours: float) -> bool:
-        if interval_hours <= 0:
-            return True
-        if not self.status_state_path.exists():
-            return True
+    def _status_report_due(self, hour: int, minute: int, timezone: str) -> bool:
+        local_now = datetime.now(ZoneInfo(timezone))
+        target_time = local_now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if local_now < target_time:
+            return False
+
+        local_date = local_now.date().isoformat()
         try:
-            state = json.loads(self.status_state_path.read_text(encoding="utf-8"))
-            last_sent_at = datetime.fromisoformat(str(state.get("last_sent_at", "")))
-        except (ValueError, json.JSONDecodeError, OSError):
+            state = json.loads(self.status_state_path.read_text(encoding="utf-8")) if self.status_state_path.exists() else {}
+        except (json.JSONDecodeError, OSError):
             return True
-        if last_sent_at.tzinfo is None:
-            last_sent_at = last_sent_at.replace(tzinfo=UTC)
-        return datetime.now(UTC) - last_sent_at >= timedelta(hours=interval_hours)
+        return state.get("last_sent_date") != local_date
 
-    def _mark_status_report_sent(self) -> None:
+    def _mark_status_report_sent(self, timezone: str) -> None:
+        local_now = datetime.now(ZoneInfo(timezone))
         self.status_state_path.write_text(
-            json.dumps({"last_sent_at": datetime.now(UTC).isoformat()}, indent=2),
+            json.dumps(
+                {
+                    "last_sent_at": datetime.now(UTC).isoformat(),
+                    "last_sent_date": local_now.date().isoformat(),
+                },
+                indent=2,
+            ),
             encoding="utf-8",
         )
 
