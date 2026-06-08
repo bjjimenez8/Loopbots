@@ -26,19 +26,11 @@ class TelegramAlertClient:
         message = (
             "LOOP BOT ENTRY\n"
             f"Coin: {signal.symbol}\n"
-            f"Method: {(signal.loop_settings or {}).get('method_name', 'Trend pullback')}\n"
-            f"Preset: {loop_plan.get('preset_name', 'Optimized')}\n"
-            "Action: Start loop bot / enter trade\n"
             f"Entry: {signal.price}\n"
-            "Bitsgap Setup: Manual LOOP\n"
             f"Order Distance: {loop_plan.get('order_distance_pct', 'n/a')}%\n"
             f"Order Count: {loop_plan.get('order_count', 'n/a')}\n"
-            f"Auto Range Reference: {loop_plan.get('estimated_low_price', 'auto')} - {loop_plan.get('estimated_high_price', 'auto')}\n"
-            "Range Note: Bitsgap sets low/high automatically\n"
-            f"Score: {loop_plan.get('setup_score', 'n/a')}/100\n"
-            f"Safety Exit / Stop Bot: {signal.safety_exit_price}\n"
-            f"Take Profit Price Target: {signal.take_profit_price}\n"
-            f"Reason: {signal.reason}"
+            f"Stop Bot: {signal.safety_exit_price}\n"
+            f"Take Profit: {signal.take_profit_price}"
         )
         await self._send(message)
 
