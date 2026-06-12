@@ -249,6 +249,21 @@ strategy_modes:
       method_name: Trend pullback
       order_distance_pct: 1.2
       order_count: 10
+  - name: doge_wide_quality
+    market_type: any
+    allowed_base_assets:
+      - DOGE
+    strategy_overrides:
+      pullback_lookback: 6
+      pullback_max_pct: 0.035
+      bounce_confirmation_pct: 0.0015
+      min_volume_ratio: 0.85
+      max_active_minutes: 180
+    loop_settings:
+      preset_name: DOGE Wide Quality
+      method_name: Trend pullback
+      order_distance_pct: 1.5
+      order_count: 10
   - name: sol_optimized
     market_type: any
     allowed_base_assets:
@@ -263,6 +278,21 @@ strategy_modes:
       preset_name: Optimized SOL
       method_name: Trend pullback
       order_distance_pct: 2.0
+      order_count: 10
+  - name: sol_balanced_more_trades
+    market_type: any
+    allowed_base_assets:
+      - SOL
+    strategy_overrides:
+      pullback_lookback: 6
+      pullback_max_pct: 0.035
+      bounce_confirmation_pct: 0.0015
+      min_volume_ratio: 0.85
+      max_active_minutes: 180
+    loop_settings:
+      preset_name: SOL Balanced
+      method_name: Trend pullback
+      order_distance_pct: 1.5
       order_count: 10
   - name: eth_optimized
     market_type: any
@@ -293,6 +323,21 @@ strategy_modes:
       preset_name: Optimized LTC
       method_name: Trend pullback
       order_distance_pct: 1.0
+      order_count: 10
+  - name: ltc_wide_quality
+    market_type: any
+    allowed_base_assets:
+      - LTC
+    strategy_overrides:
+      pullback_lookback: 6
+      pullback_max_pct: 0.035
+      bounce_confirmation_pct: 0.0015
+      min_volume_ratio: 0.85
+      max_active_minutes: 180
+    loop_settings:
+      preset_name: LTC Wide Quality
+      method_name: Trend pullback
+      order_distance_pct: 2.0
       order_count: 10
   - name: algo_optimized
     market_type: any
