@@ -98,7 +98,39 @@ grid_watch:
     min_volatility_pct: 2
     max_volatility_pct: 80
     max_abs_change_pct: 35
-    max_pairs: 8
+    max_pairs: 12
+    auto_add_new: true
+    auto_min_quote_volume: 500000
+    auto_min_volatility_pct: 3
+    auto_max_volatility_pct: 35
+    auto_max_abs_change_pct: 20
+    auto_preset_name: Auto Hot GRID
+    auto_lower_pct: 8
+    auto_upper_pct: 35
+    auto_levels: 10
+    auto_take_profit_pct: 8
+    auto_stop_loss_pct: 5
+    auto_launch_filter: strict-sideways
+    auto_score: 65
+    excluded_base_assets:
+      - USDT
+      - USDC
+      - DAI
+      - PYUSD
+      - EUR
+      - USD
+      - GBP
+      - AUD
+      - CAD
+      - JPY
+      - USDG
+      - USDE
+      - PAXG
+      - XAUT
+      - EURC
+      - USD1
+      - RLUSD
+      - AUSD
     profiles:
       - base_asset: PEPE
         allowed_quotes:

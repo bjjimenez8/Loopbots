@@ -30,6 +30,8 @@ These are the current Hot GRID profiles in `config.yaml`:
 
 These are not random coins. They were added because the filtered backtest looked better than the other Kraken pairs tested. Coins that did not hold up were left out.
 
+The scanner also has an `Auto Hot GRID` lane for new Kraken `USD`/`USDC` coins. Those candidates must pass stricter volume, volatility, plain-symbol, and strict-sideways filters before alerting. They use `-8% / +35%`, `10` levels, `+8%` take profit, and `-5%` stop loss. They are not treated as per-coin proven profiles until research confirms them.
+
 ## Entry Alert
 
 The Telegram entry alert is intentionally short. It only shows the fields needed to create the GRID bot in Bitsgap:

@@ -15,6 +15,26 @@ import pandas as pd
 LOGGER = logging.getLogger(__name__)
 
 
+STABLE_BASES = {
+    "USDT",
+    "USDC",
+    "DAI",
+    "PYUSD",
+    "FDUSD",
+    "TUSD",
+    "USDE",
+    "USDG",
+    "EUR",
+    "USD",
+    "GBP",
+    "AUD",
+    "CAD",
+    "JPY",
+}
+
+LEVERAGED_SUFFIXES = ("UP", "DOWN", "3L", "3S", "5L", "5S", "BULL", "BEAR")
+
+
 @dataclass(frozen=True)
 class GridSetup:
     symbol: str
@@ -65,6 +85,20 @@ class HotGridDiscoveryConfig:
     max_abs_change_pct: float
     max_pairs: int
     profiles: list[HotGridProfile]
+    auto_add_new: bool
+    auto_min_quote_volume: float
+    auto_min_volatility_pct: float
+    auto_max_volatility_pct: float
+    auto_max_abs_change_pct: float
+    auto_preset_name: str
+    auto_lower_pct: float
+    auto_upper_pct: float
+    auto_levels: int
+    auto_take_profit_pct: float
+    auto_stop_loss_pct: float
+    auto_launch_filter: str
+    auto_score: int
+    excluded_base_assets: set[str]
 
 
 @dataclass(frozen=True)
@@ -150,6 +184,23 @@ class GridWatchService:
             max_abs_change_pct=float(hot_raw.get("max_abs_change_pct", 35.0)),
             max_pairs=int(hot_raw.get("max_pairs", 8)),
             profiles=hot_profiles,
+            auto_add_new=bool(hot_raw.get("auto_add_new", False)),
+            auto_min_quote_volume=float(hot_raw.get("auto_min_quote_volume", 500_000.0)),
+            auto_min_volatility_pct=float(hot_raw.get("auto_min_volatility_pct", 3.0)),
+            auto_max_volatility_pct=float(hot_raw.get("auto_max_volatility_pct", 35.0)),
+            auto_max_abs_change_pct=float(hot_raw.get("auto_max_abs_change_pct", 20.0)),
+            auto_preset_name=str(hot_raw.get("auto_preset_name", "Auto Hot GRID")),
+            auto_lower_pct=float(hot_raw.get("auto_lower_pct", 8.0)),
+            auto_upper_pct=float(hot_raw.get("auto_upper_pct", 35.0)),
+            auto_levels=int(hot_raw.get("auto_levels", 10)),
+            auto_take_profit_pct=float(hot_raw.get("auto_take_profit_pct", hot_raw.get("take_profit_pct", raw_config.get("take_profit_pct", 8.0)))),
+            auto_stop_loss_pct=float(hot_raw.get("auto_stop_loss_pct", hot_raw.get("stop_loss_pct", raw_config.get("stop_loss_pct", 5.0)))),
+            auto_launch_filter=str(hot_raw.get("auto_launch_filter", "strict-sideways")),
+            auto_score=int(hot_raw.get("auto_score", 65)),
+            excluded_base_assets={
+                str(base).upper()
+                for base in hot_raw.get("excluded_base_assets", [])
+            },
         )
         state_file = str(project_root / raw_config.get("state_file", "data/grid_watch_state.json"))
         history_file = str(project_root / raw_config.get("history_file", "data/grid_trade_history.csv"))
@@ -311,7 +362,7 @@ class GridWatchService:
 
             base = str(market.get("base", "")).upper()
             profile = profiles_by_base.get(base)
-            if profile is None or quote not in profile.allowed_quotes:
+            if profile is not None and quote not in profile.allowed_quotes:
                 continue
 
             ticker = tickers.get(symbol) or {}
@@ -333,25 +384,19 @@ class GridWatchService:
             if change_pct > self.config.hot_discovery.max_abs_change_pct:
                 continue
 
+            setup = self._profile_setup(symbol, profile) if profile is not None else self._auto_setup(
+                symbol=symbol,
+                base=base,
+                quote_volume=quote_volume,
+                volatility_pct=volatility_pct,
+                change_pct=change_pct,
+            )
+            if setup is None:
+                continue
+
             candidates.append(
                 (
-                    GridSetup(
-                        symbol=symbol,
-                        preset_name=profile.preset_name,
-                        lower_pct=profile.lower_pct,
-                        upper_pct=profile.upper_pct,
-                        levels=profile.levels,
-                        take_profit_pct=profile.take_profit_pct,
-                        stop_loss_pct=profile.stop_loss_pct,
-                        historical_win_rate_pct=profile.historical_win_rate_pct,
-                        historical_avg_return_pct=profile.historical_avg_return_pct,
-                        historical_monthly_pct=profile.historical_monthly_pct,
-                        historical_avg_drawdown_pct=profile.historical_avg_drawdown_pct,
-                        historical_worst_drawdown_pct=profile.historical_worst_drawdown_pct,
-                        historical_alerts_per_month=profile.historical_alerts_per_month,
-                        score=profile.score,
-                        launch_filter=profile.launch_filter,
-                    ),
+                    setup,
                     quote_volume,
                     volatility_pct,
                 )
@@ -359,6 +404,66 @@ class GridWatchService:
 
         candidates.sort(key=lambda item: (-item[0].score, -item[1], -item[2], item[0].symbol))
         return [setup for setup, _, _ in candidates[: self.config.hot_discovery.max_pairs]]
+
+    @staticmethod
+    def _profile_setup(symbol: str, profile: HotGridProfile) -> GridSetup:
+        return GridSetup(
+            symbol=symbol,
+            preset_name=profile.preset_name,
+            lower_pct=profile.lower_pct,
+            upper_pct=profile.upper_pct,
+            levels=profile.levels,
+            take_profit_pct=profile.take_profit_pct,
+            stop_loss_pct=profile.stop_loss_pct,
+            historical_win_rate_pct=profile.historical_win_rate_pct,
+            historical_avg_return_pct=profile.historical_avg_return_pct,
+            historical_monthly_pct=profile.historical_monthly_pct,
+            historical_avg_drawdown_pct=profile.historical_avg_drawdown_pct,
+            historical_worst_drawdown_pct=profile.historical_worst_drawdown_pct,
+            historical_alerts_per_month=profile.historical_alerts_per_month,
+            score=profile.score,
+            launch_filter=profile.launch_filter,
+        )
+
+    def _auto_setup(
+        self,
+        symbol: str,
+        base: str,
+        quote_volume: float,
+        volatility_pct: float,
+        change_pct: float,
+    ) -> GridSetup | None:
+        hot = self.config.hot_discovery
+        if not hot.auto_add_new:
+            return None
+        if base in STABLE_BASES or base in hot.excluded_base_assets:
+            return None
+        if base.endswith(LEVERAGED_SUFFIXES) or not _is_plain_symbol(base):
+            return None
+        if quote_volume < hot.auto_min_quote_volume:
+            return None
+        if volatility_pct < hot.auto_min_volatility_pct or volatility_pct > hot.auto_max_volatility_pct:
+            return None
+        if change_pct > hot.auto_max_abs_change_pct:
+            return None
+
+        return GridSetup(
+            symbol=symbol,
+            preset_name=hot.auto_preset_name,
+            lower_pct=hot.auto_lower_pct,
+            upper_pct=hot.auto_upper_pct,
+            levels=hot.auto_levels,
+            take_profit_pct=hot.auto_take_profit_pct,
+            stop_loss_pct=hot.auto_stop_loss_pct,
+            historical_win_rate_pct=0.0,
+            historical_avg_return_pct=0.0,
+            historical_monthly_pct=0.0,
+            historical_avg_drawdown_pct=0.0,
+            historical_worst_drawdown_pct=0.0,
+            historical_alerts_per_month=0.0,
+            score=hot.auto_score,
+            launch_filter=hot.auto_launch_filter,
+        )
 
     def _passes_sideways(self, candles: pd.DataFrame, launch_filter: str) -> bool:
         return bool(self._sideways_status(candles, launch_filter)["passes"])
@@ -586,6 +691,10 @@ def _quote_volume(ticker: dict[str, Any], last_price: float) -> float:
         return quote_volume
     base_volume = _number(ticker.get("baseVolume"))
     return base_volume * last_price if base_volume > 0 and last_price > 0 else 0.0
+
+
+def _is_plain_symbol(text: str) -> bool:
+    return text.isascii() and text.replace("_", "").replace("-", "").isalnum()
 
 
 def _to_float(value: Any) -> float:
