@@ -170,31 +170,25 @@ class LoopbotsApp:
 
         logging.info("Scan complete")
         grid_counts = await self.scan_grid_watch()
-        total_alerts = loop_entry_count + loop_exit_count + grid_counts["entries"] + grid_counts["exits"]
+        total_alerts = loop_entry_count + loop_exit_count + grid_counts["entries"]
         if total_alerts == 0:
             await self.maybe_send_no_alert_status(loop_diagnostics)
         self._prune_paper_history()
 
     async def scan_grid_watch(self) -> dict[str, int]:
-        counts = {"entries": 0, "exits": 0}
+        counts = {"entries": 0}
         if not self.grid_watch.config.enabled:
             return counts
 
         try:
-            exit_alerts = self.grid_watch.find_exit_alerts()
             alerts = self.grid_watch.find_alerts()
         except Exception:
             logging.exception("Failed to scan GRID watch")
             return counts
 
-        for alert in exit_alerts:
-            await self.telegram.send_grid_exit_alert(alert)
         for alert in alerts:
             await self.telegram.send_grid_alert(alert)
         counts["entries"] = len(alerts)
-        counts["exits"] = len(exit_alerts)
-        if exit_alerts:
-            logging.info("Sent %d GRID exit alerts", len(exit_alerts))
         if alerts:
             logging.info("Sent %d GRID watch alerts", len(alerts))
         return counts

@@ -31,6 +31,40 @@ class GridSetup:
     historical_worst_drawdown_pct: float
     historical_alerts_per_month: float
     score: int
+    launch_filter: str = "strict-sideways"
+
+
+@dataclass(frozen=True)
+class HotGridProfile:
+    base_asset: str
+    allowed_quotes: list[str]
+    preset_name: str
+    lower_pct: float
+    upper_pct: float
+    levels: int
+    take_profit_pct: float
+    stop_loss_pct: float
+    launch_filter: str
+    historical_win_rate_pct: float
+    historical_avg_return_pct: float
+    historical_monthly_pct: float
+    historical_avg_drawdown_pct: float
+    historical_worst_drawdown_pct: float
+    historical_alerts_per_month: float
+    score: int
+
+
+@dataclass(frozen=True)
+class HotGridDiscoveryConfig:
+    enabled: bool
+    quote_assets: list[str]
+    min_quote_volume: float
+    min_last_price: float
+    min_volatility_pct: float
+    max_volatility_pct: float
+    max_abs_change_pct: float
+    max_pairs: int
+    profiles: list[HotGridProfile]
 
 
 @dataclass(frozen=True)
@@ -45,6 +79,7 @@ class GridWatchConfig:
     state_file: str
     history_file: str
     setups: list[GridSetup]
+    hot_discovery: HotGridDiscoveryConfig
 
 
 class GridWatchService:
@@ -54,6 +89,7 @@ class GridWatchService:
             raise ValueError(f"Unsupported GRID exchange id: {config.exchange_id}")
         exchange_class = getattr(ccxt, config.exchange_id)
         self.exchange = exchange_class({"enableRateLimit": True})
+        self.exchange.load_markets()
         self._state_path = Path(config.state_file)
         self._history_path = Path(config.history_file)
         self._state_path.parent.mkdir(parents=True, exist_ok=True)
@@ -78,9 +114,43 @@ class GridWatchService:
                 historical_worst_drawdown_pct=float(item["historical_worst_drawdown_pct"]),
                 historical_alerts_per_month=float(item["historical_alerts_per_month"]),
                 score=int(item["score"]),
+                launch_filter=str(item.get("launch_filter", "strict-sideways")),
             )
             for item in raw_config.get("setups", [])
         ]
+        hot_raw = raw_config.get("hot_discovery", {})
+        hot_profiles = [
+            HotGridProfile(
+                base_asset=str(item["base_asset"]).upper(),
+                allowed_quotes=[str(quote).upper() for quote in item.get("allowed_quotes", hot_raw.get("quote_assets", ["USD", "USDC"]))],
+                preset_name=str(item["preset_name"]),
+                lower_pct=float(item["lower_pct"]),
+                upper_pct=float(item["upper_pct"]),
+                levels=int(item["levels"]),
+                take_profit_pct=float(item.get("take_profit_pct", hot_raw.get("take_profit_pct", raw_config.get("take_profit_pct", 8.0)))),
+                stop_loss_pct=float(item.get("stop_loss_pct", hot_raw.get("stop_loss_pct", raw_config.get("stop_loss_pct", 5.0)))),
+                launch_filter=str(item.get("launch_filter", "sideways")),
+                historical_win_rate_pct=float(item["historical_win_rate_pct"]),
+                historical_avg_return_pct=float(item["historical_avg_return_pct"]),
+                historical_monthly_pct=float(item["historical_monthly_pct"]),
+                historical_avg_drawdown_pct=float(item["historical_avg_drawdown_pct"]),
+                historical_worst_drawdown_pct=float(item["historical_worst_drawdown_pct"]),
+                historical_alerts_per_month=float(item["historical_alerts_per_month"]),
+                score=int(item["score"]),
+            )
+            for item in hot_raw.get("profiles", [])
+        ]
+        hot_discovery = HotGridDiscoveryConfig(
+            enabled=bool(hot_raw.get("enabled", False)),
+            quote_assets=[str(quote).upper() for quote in hot_raw.get("quote_assets", ["USD", "USDC"])],
+            min_quote_volume=float(hot_raw.get("min_quote_volume", 100_000.0)),
+            min_last_price=float(hot_raw.get("min_last_price", 0.000001)),
+            min_volatility_pct=float(hot_raw.get("min_volatility_pct", 2.0)),
+            max_volatility_pct=float(hot_raw.get("max_volatility_pct", 80.0)),
+            max_abs_change_pct=float(hot_raw.get("max_abs_change_pct", 35.0)),
+            max_pairs=int(hot_raw.get("max_pairs", 8)),
+            profiles=hot_profiles,
+        )
         state_file = str(project_root / raw_config.get("state_file", "data/grid_watch_state.json"))
         history_file = str(project_root / raw_config.get("history_file", "data/grid_trade_history.csv"))
         return cls(
@@ -95,6 +165,7 @@ class GridWatchService:
                 state_file=state_file,
                 history_file=history_file,
                 setups=setups,
+                hot_discovery=hot_discovery,
             )
         )
 
@@ -104,10 +175,10 @@ class GridWatchService:
 
         state = self._load_state()
         alerts: list[dict[str, Any]] = []
-        for setup in self.config.setups:
+        for setup in self._candidate_setups():
             key = self._state_key(setup)
             state_item = state.get(key)
-            if self._has_active_grid(state_item) or self._in_cooldown(state_item):
+            if self._in_cooldown(state_item):
                 continue
 
             try:
@@ -116,7 +187,7 @@ class GridWatchService:
                 LOGGER.exception("Failed to fetch GRID candles for %s", setup.symbol)
                 continue
 
-            if not self._passes_strict_sideways(candles):
+            if not self._passes_sideways(candles, setup.launch_filter):
                 continue
 
             alert = self._build_alert(setup, candles)
@@ -126,7 +197,6 @@ class GridWatchService:
                 "last_alert_at": now,
                 "symbol": setup.symbol,
                 "preset_name": setup.preset_name,
-                "active_grid": self._build_active_record(alert, now),
             }
             self._append_history(self._build_entry_history_row(alert, now))
 
@@ -134,75 +204,26 @@ class GridWatchService:
             self._save_state(state)
         return alerts
 
-    def find_exit_alerts(self) -> list[dict[str, Any]]:
-        if not self.config.enabled:
-            return []
-
-        state = self._load_state()
-        exit_alerts: list[dict[str, Any]] = []
-        changed = False
-        for setup in self.config.setups:
-            key = self._state_key(setup)
-            state_item = state.get(key)
-            if not isinstance(state_item, dict):
-                continue
-
-            active_grid = state_item.get("active_grid")
-            if not isinstance(active_grid, dict):
-                continue
-
-            try:
-                candles = self._fetch_candles(setup.symbol)
-            except Exception:
-                LOGGER.exception("Failed to fetch GRID exit candles for %s", setup.symbol)
-                continue
-
-            current_price = float(candles["close"].iloc[-1])
-            take_profit_price = float(active_grid.get("take_profit_price") or 0)
-            stop_loss_price = float(active_grid.get("stop_loss_price") or 0)
-            exit_reason = ""
-            if take_profit_price > 0 and current_price >= take_profit_price:
-                exit_reason = "Take Profit"
-            elif stop_loss_price > 0 and current_price <= stop_loss_price:
-                exit_reason = "Stop Loss"
-
-            if not exit_reason:
-                continue
-
-            exit_alert = self._build_exit_alert(setup, active_grid, current_price, exit_reason)
-            exit_alerts.append(exit_alert)
-            self._append_history(self._build_exit_history_row(active_grid, exit_alert))
-            state_item.pop("active_grid", None)
-            state_item["last_exit_at"] = datetime.now(UTC).isoformat()
-            state_item["last_exit_reason"] = exit_reason
-            state[key] = state_item
-            changed = True
-
-        if changed:
-            self._save_state(state)
-        return exit_alerts
-
     def diagnostics(self) -> list[dict[str, Any]]:
         if not self.config.enabled:
             return []
 
         state = self._load_state()
         results: list[dict[str, Any]] = []
-        for setup in self.config.setups:
+        for setup in self._candidate_setups():
             key = self._state_key(setup)
             state_item = state.get(key)
-            active = self._has_active_grid(state_item)
             cooldown = self._in_cooldown(state_item)
             try:
                 candles = self._fetch_candles(setup.symbol)
-                status = self._sideways_status(candles)
+                status = self._sideways_status(candles, setup.launch_filter)
             except Exception as exc:
                 LOGGER.exception("Failed to build GRID diagnostics for %s", setup.symbol)
                 results.append(
                     {
                         "symbol": setup.symbol,
                         "ready": False,
-                        "active": active,
+                        "active": False,
                         "cooldown": cooldown,
                         "reason": f"data error: {exc}",
                     }
@@ -210,17 +231,15 @@ class GridWatchService:
                 continue
 
             reasons = []
-            if active:
-                reasons.append("active")
             if cooldown:
                 reasons.append("cooldown")
             reasons.extend(status["reasons"])
-            ready = not active and not cooldown and status["passes"]
+            ready = not cooldown and status["passes"]
             results.append(
                 {
                     "symbol": setup.symbol,
                     "ready": ready,
-                    "active": active,
+                    "active": False,
                     "cooldown": cooldown,
                     "reason": "READY" if ready else "; ".join(reasons),
                     **status,
@@ -257,10 +276,94 @@ class GridWatchService:
             df[column] = pd.to_numeric(df[column], errors="coerce")
         return df.dropna().reset_index(drop=True)
 
-    def _passes_strict_sideways(self, candles: pd.DataFrame) -> bool:
-        return bool(self._sideways_status(candles)["passes"])
+    def _candidate_setups(self) -> list[GridSetup]:
+        setups = list(self.config.setups)
+        if self.config.hot_discovery.enabled:
+            setups.extend(self._discover_hot_setups())
+        seen: set[str] = set()
+        unique: list[GridSetup] = []
+        for setup in sorted(setups, key=lambda item: (-item.score, item.symbol)):
+            key = self._state_key(setup)
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(setup)
+        return unique
 
-    def _sideways_status(self, candles: pd.DataFrame) -> dict[str, Any]:
+    def _discover_hot_setups(self) -> list[GridSetup]:
+        profiles_by_base = {profile.base_asset: profile for profile in self.config.hot_discovery.profiles}
+        if not profiles_by_base:
+            return []
+
+        try:
+            tickers = self.exchange.fetch_tickers()
+        except Exception:
+            LOGGER.exception("Failed to fetch GRID hot-discovery tickers")
+            return []
+
+        candidates: list[tuple[GridSetup, float, float]] = []
+        for symbol, market in self.exchange.markets.items():
+            quote = str(market.get("quote", "")).upper()
+            if quote not in self.config.hot_discovery.quote_assets:
+                continue
+            if not market.get("spot", False) or not market.get("active", True):
+                continue
+
+            base = str(market.get("base", "")).upper()
+            profile = profiles_by_base.get(base)
+            if profile is None or quote not in profile.allowed_quotes:
+                continue
+
+            ticker = tickers.get(symbol) or {}
+            last_price = _number(ticker.get("last"), ticker.get("close"), 0.0)
+            high_price = _number(ticker.get("high"), last_price, 0.0)
+            low_price = _number(ticker.get("low"), last_price, 0.0)
+            quote_volume = _quote_volume(ticker, last_price)
+            volatility_pct = ((high_price - low_price) / low_price) * 100 if low_price > 0 else 0.0
+            change_pct = abs(_number(ticker.get("percentage"), 0.0))
+
+            if last_price < self.config.hot_discovery.min_last_price:
+                continue
+            if quote_volume < self.config.hot_discovery.min_quote_volume:
+                continue
+            if volatility_pct < self.config.hot_discovery.min_volatility_pct:
+                continue
+            if volatility_pct > self.config.hot_discovery.max_volatility_pct:
+                continue
+            if change_pct > self.config.hot_discovery.max_abs_change_pct:
+                continue
+
+            candidates.append(
+                (
+                    GridSetup(
+                        symbol=symbol,
+                        preset_name=profile.preset_name,
+                        lower_pct=profile.lower_pct,
+                        upper_pct=profile.upper_pct,
+                        levels=profile.levels,
+                        take_profit_pct=profile.take_profit_pct,
+                        stop_loss_pct=profile.stop_loss_pct,
+                        historical_win_rate_pct=profile.historical_win_rate_pct,
+                        historical_avg_return_pct=profile.historical_avg_return_pct,
+                        historical_monthly_pct=profile.historical_monthly_pct,
+                        historical_avg_drawdown_pct=profile.historical_avg_drawdown_pct,
+                        historical_worst_drawdown_pct=profile.historical_worst_drawdown_pct,
+                        historical_alerts_per_month=profile.historical_alerts_per_month,
+                        score=profile.score,
+                        launch_filter=profile.launch_filter,
+                    ),
+                    quote_volume,
+                    volatility_pct,
+                )
+            )
+
+        candidates.sort(key=lambda item: (-item[0].score, -item[1], -item[2], item[0].symbol))
+        return [setup for setup, _, _ in candidates[: self.config.hot_discovery.max_pairs]]
+
+    def _passes_sideways(self, candles: pd.DataFrame, launch_filter: str) -> bool:
+        return bool(self._sideways_status(candles, launch_filter)["passes"])
+
+    def _sideways_status(self, candles: pd.DataFrame, launch_filter: str = "strict-sideways") -> dict[str, Any]:
         if candles.empty:
             return {"passes": False, "reasons": ["no candles"]}
 
@@ -280,14 +383,31 @@ class GridWatchService:
         range_pct = ((high_price / low_price) - 1) * 100
         directional_efficiency = abs(trend_return_pct) / max(range_pct, 0.01)
         range_position = (current_close - low_price) / (high_price - low_price)
+        if launch_filter == "sideways":
+            min_trend_pct = -8.0
+            max_trend_pct = 12.0
+            min_range_pct = 5.0
+            max_range_pct = 35.0
+            max_directional_efficiency = 0.55
+            min_range_position = 0.15
+            max_range_position = 0.90
+        else:
+            min_trend_pct = -5.0
+            max_trend_pct = 8.0
+            min_range_pct = 5.0
+            max_range_pct = 25.0
+            max_directional_efficiency = 0.40
+            min_range_position = 0.20
+            max_range_position = 0.80
+
         reasons = []
-        if not -5 <= trend_return_pct <= 8:
+        if not min_trend_pct <= trend_return_pct <= max_trend_pct:
             reasons.append(f"trend {trend_return_pct:.2f}%")
-        if not 5 <= range_pct <= 25:
+        if not min_range_pct <= range_pct <= max_range_pct:
             reasons.append(f"range {range_pct:.2f}%")
-        if directional_efficiency > 0.40:
+        if directional_efficiency > max_directional_efficiency:
             reasons.append(f"directional {directional_efficiency:.2f}")
-        if not 0.20 <= range_position <= 0.80:
+        if not min_range_position <= range_position <= max_range_position:
             reasons.append(f"position {range_position:.2f}")
         return {
             "passes": not reasons,
@@ -305,7 +425,7 @@ class GridWatchService:
         high_price = current_price * (1 + setup.upper_pct / 100)
         stop_loss_price = current_price * (1 - setup.stop_loss_pct / 100)
         take_profit_price = current_price * (1 + setup.take_profit_pct / 100)
-        grid_step_pct = (setup.lower_pct + setup.upper_pct) / setup.levels
+        grid_step_pct = (((high_price / low_price) ** (1 / setup.levels)) - 1) * 100
         estimated_profit = self.config.investment_usdt * (setup.historical_monthly_pct / 100)
         return {
             "symbol": setup.symbol,
@@ -318,11 +438,12 @@ class GridWatchService:
             "high_price": _fmt_price(high_price),
             "stop_loss_price": stop_loss_price,
             "take_profit_price": take_profit_price,
-            "grid_step_pct": _fmt_number(grid_step_pct),
+            "grid_step_pct": _fmt_grid_step(grid_step_pct),
             "levels": setup.levels,
-            "order_size_currency": "USDT",
+            "order_size_currency": setup.symbol.split("/")[-1],
             "trailing_up": "On",
             "pump_protection": "On",
+            "trailing_down": "Off",
             "stop_loss_pct": f"-{_fmt_number(setup.stop_loss_pct)}",
             "take_profit_pct": f"+{_fmt_number(setup.take_profit_pct)}",
             "backtest_return_pct": f"+{_fmt_number(setup.historical_avg_return_pct)}",
@@ -333,44 +454,6 @@ class GridWatchService:
             "historical_win_rate_pct": _fmt_number(setup.historical_win_rate_pct),
             "historical_alerts_per_month": _fmt_number(setup.historical_alerts_per_month),
         }
-
-    @staticmethod
-    def _build_active_record(alert: dict[str, Any], started_at: str) -> dict[str, Any]:
-        return {
-            "symbol": alert["symbol"],
-            "preset_name": alert["preset_name"],
-            "started_at": started_at,
-            "entry_price": alert["entry_price"],
-            "low_price": alert["low_price"],
-            "high_price": alert["high_price"],
-            "stop_loss_price": alert["stop_loss_price"],
-            "take_profit_price": alert["take_profit_price"],
-        }
-
-    def _build_exit_alert(
-        self,
-        setup: GridSetup,
-        active_grid: dict[str, Any],
-        current_price: float,
-        exit_reason: str,
-    ) -> dict[str, Any]:
-        entry_price = float(active_grid.get("entry_price") or 0.0)
-        gross_return_pct = ((current_price / entry_price) - 1) * 100 if entry_price > 0 else 0.0
-        return {
-            "symbol": setup.symbol,
-            "exchange": "Kraken",
-            "current_price": _fmt_price(current_price),
-            "exit_reason": exit_reason,
-            "entry_price": _fmt_price(entry_price),
-            "gross_return_pct": round(gross_return_pct, 4),
-            "net_return_pct": round(gross_return_pct, 4),
-            "opened_at": str(active_grid.get("started_at", "")),
-            "event_at": datetime.now(UTC).isoformat(),
-        }
-
-    @staticmethod
-    def _has_active_grid(state_item: Any) -> bool:
-        return isinstance(state_item, dict) and isinstance(state_item.get("active_grid"), dict)
 
     def _in_cooldown(self, state_item: Any) -> bool:
         if not isinstance(state_item, dict):
@@ -464,28 +547,16 @@ class GridWatchService:
             "opened_at": event_at,
         }
 
-    @staticmethod
-    def _build_exit_history_row(active_grid: dict[str, Any], exit_alert: dict[str, Any]) -> dict[str, Any]:
-        event = "GRID_TAKE_PROFIT" if exit_alert.get("exit_reason") == "Take Profit" else "GRID_STOP_LOSS"
-        return {
-            "event": event,
-            "event_at": exit_alert.get("event_at", ""),
-            "symbol": active_grid.get("symbol", ""),
-            "preset_name": active_grid.get("preset_name", ""),
-            "exchange": exit_alert.get("exchange", ""),
-            "entry_price": active_grid.get("entry_price", ""),
-            "exit_price": exit_alert.get("current_price", ""),
-            "low_price": active_grid.get("low_price", ""),
-            "high_price": active_grid.get("high_price", ""),
-            "gross_return_pct": exit_alert.get("gross_return_pct", ""),
-            "net_return_pct": exit_alert.get("net_return_pct", ""),
-            "opened_at": active_grid.get("started_at", ""),
-            "exit_reason": exit_alert.get("exit_reason", ""),
-        }
-
 
 def _fmt_number(value: float) -> str:
     return f"{value:.2f}".rstrip("0").rstrip(".")
+
+
+def _fmt_grid_step(value: float) -> str:
+    rounded_one_decimal = round(value, 1)
+    if rounded_one_decimal.is_integer():
+        return str(int(rounded_one_decimal))
+    return f"{rounded_one_decimal:.1f}"
 
 
 def _fmt_price(value: float) -> str:
@@ -494,6 +565,27 @@ def _fmt_price(value: float) -> str:
     if value >= 1:
         return f"{value:.4f}".rstrip("0").rstrip(".")
     return f"{value:.8f}".rstrip("0").rstrip(".")
+
+
+def _number(*values: Any) -> float:
+    for value in values:
+        try:
+            if value is None:
+                continue
+            number = float(value)
+            if pd.notna(number):
+                return number
+        except (TypeError, ValueError):
+            continue
+    return 0.0
+
+
+def _quote_volume(ticker: dict[str, Any], last_price: float) -> float:
+    quote_volume = _number(ticker.get("quoteVolume"))
+    if quote_volume > 0:
+        return quote_volume
+    base_volume = _number(ticker.get("baseVolume"))
+    return base_volume * last_price if base_volume > 0 and last_price > 0 else 0.0
 
 
 def _to_float(value: Any) -> float:

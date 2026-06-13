@@ -447,10 +447,16 @@ def simulate_grid(
     if start_price <= low_price or start_price >= high_price:
         return _empty_result(candles, low_price, high_price, levels, investment, reason="start_outside_range")
 
-    grid_prices = [low_price + ((high_price - low_price) * index / levels) for index in range(levels + 1)]
-    interval = grid_prices[1] - grid_prices[0]
-    grid_step_pct = (interval / start_price) * 100
-    current_index = max(0, min(levels - 1, int((start_price - low_price) / interval)))
+    grid_ratio = (high_price / low_price) ** (1 / levels)
+    grid_prices = [low_price * (grid_ratio**index) for index in range(levels + 1)]
+    grid_step_pct = (grid_ratio - 1) * 100
+    current_index = max(
+        0,
+        min(
+            levels - 1,
+            max(index for index, grid_price in enumerate(grid_prices[:-1]) if grid_price <= start_price),
+        ),
+    )
 
     buy_levels = list(range(0, current_index + 1))
     sell_levels = list(range(current_index + 1, levels + 1))
@@ -803,7 +809,7 @@ def _optimization_presets(args: argparse.Namespace) -> list[GridPreset]:
             for levels in levels_list:
                 if levels < 5 or levels > 100:
                     continue
-                approx_step_pct = (lower_pct + upper_pct) / levels
+                approx_step_pct = ((((1 + upper_pct / 100) / (1 - lower_pct / 100)) ** (1 / levels)) - 1) * 100
                 if approx_step_pct < args.optimizer_min_grid_step_pct:
                     continue
                 key = (round(lower_pct, 4), round(upper_pct, 4), levels)

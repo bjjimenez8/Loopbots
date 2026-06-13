@@ -65,14 +65,23 @@ It also starts a local paper-trading dashboard at `http://127.0.0.1:3000` so you
 
 ## GRID Bots
 
-Loopbots also has a live GRID watch feature for selected Kraken `USDT` pairs.
+Loopbots also has a live Hot GRID watch feature for Kraken `USD` and `USDC` pairs.
 
-GRID alerts are manual Bitsgap setup alerts. The bot does not create the bot for you. It sends only the fields needed to create or stop a GRID bot:
+GRID alerts are manual Bitsgap setup alerts. The bot does not create the bot for you. It auto-discovers researched hot coins, checks live volume/volatility/sideways quality, and sends the fields needed to create a GRID bot with Bitsgap stop loss and take profit enabled:
 
-- `GRID BOT ENTRY`: coin, exchange, low price, high price, grid step, grid levels, trailing up, pump protection, stop loss, take profit.
-- `GRID BOT EXIT`: coin, exchange, current price, and whether the exit is take profit or stop loss.
+- `GRID BOT ENTRY`: coin, exchange, low price, high price, grid levels, rough grid step, order size currency, trailing up, pump protection, trailing down, stop loss, and take profit.
 
-GRID alerts are paper-tracked separately in `data/grid_trade_history.csv`. When the bot sends a GRID entry, it records the paper entry. When it sends a GRID exit, it records the paper result, return percent, and win/loss.
+GRID bots do not send separate exit alerts. Bitsgap's GRID stop loss and take profit settings are included in the entry alert. LOOP bots still use separate exit alerts.
+
+Current Hot GRID profiles:
+
+| Coin | Quote | Range | Levels | Historical WR | Est. monthly | Filter |
+| --- | --- | ---: | ---: | ---: | ---: | --- |
+| `PEPE` | `USD` | -8% / +50% | 10 | 100% | +27.85% | strict sideways |
+| `JTO` | `USD` | -5% / +50% | 10 | 90.91% | +22.42% | sideways |
+| `INJ` | `USD` | -8% / +50% | 10 | 63.16% | +9.79% | sideways |
+| `XCN` | `USD` | -8% / +35% | 10 | 72.22% | +14.99% | sideways |
+| `ETH` | `USDC` | -5% / +50% | 10 | 63.33% | +9.57% | strict sideways |
 
 If no LOOP or GRID alerts fire, Loopbots can send one daily `NO ENTRY` message after `8:00 PM` Pacific showing the reason and the closest LOOP and GRID coins.
 
@@ -113,7 +122,7 @@ The bot opens one active alert per pair at a time. A pair will not send another 
 
 When take profit is reached, the trade is closed silently in history so the pair can produce future `ENTER` alerts. When the safety exit is reached, the bot sends an `EXIT` alert.
 
-The local history is only for paper tracking and tuning. By default the bot prunes paper history older than `30` days, while active alerts stay saved until they close.
+The local LOOP history is only for paper tracking and tuning. By default the bot prunes paper history older than `30` days, while active LOOP alerts stay saved until they close.
 
 ## Paper Tracking
 

@@ -41,23 +41,14 @@ class TelegramAlertClient:
             f"Exchange: {grid_plan.get('exchange', 'Kraken')}\n"
             f"Low Price: {grid_plan.get('low_price', 'n/a')}\n"
             f"High Price: {grid_plan.get('high_price', 'n/a')}\n"
-            f"Grid Step: {grid_plan.get('grid_step_pct', 'n/a')}%\n"
             f"Grid Levels: {grid_plan.get('levels', 'n/a')}\n"
+            f"Grid Step: Roughly {grid_plan.get('grid_step_pct', 'n/a')}%\n"
+            f"Order Size Currency: {grid_plan.get('order_size_currency', 'n/a')}\n"
             f"Trailing Up: {grid_plan.get('trailing_up', 'On')}\n"
             f"Pump Protection: {grid_plan.get('pump_protection', 'On')}\n"
-            f"Stop Loss: {grid_plan.get('stop_loss_pct', 'n/a')}%\n"
-            f"Take Profit: {grid_plan.get('take_profit_pct', 'n/a')}%"
-        )
-        await self._send(message)
-
-    async def send_grid_exit_alert(self, grid_plan: dict[str, Any]) -> None:
-        message = (
-            "GRID BOT EXIT\n"
-            f"Coin: {grid_plan.get('symbol', 'n/a')}\n"
-            f"Exchange: {grid_plan.get('exchange', 'Kraken')}\n"
-            "Action: Stop grid bot\n"
-            f"Current Price: {grid_plan.get('current_price', 'n/a')}\n"
-            f"Reason: {grid_plan.get('exit_reason', 'n/a')}"
+            f"Trailing Down: {grid_plan.get('trailing_down', 'Off')}\n"
+            f"Stop Loss: On ({grid_plan.get('stop_loss_pct', 'n/a')}%)\n"
+            f"Take Profit: On ({grid_plan.get('take_profit_pct', 'n/a')}%)"
         )
         await self._send(message)
 
