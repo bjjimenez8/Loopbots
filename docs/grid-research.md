@@ -62,10 +62,10 @@ If no LOOP or GRID alerts fire, Loopbots can send a cooldown-limited status mess
 
 ```text
 BOT STATUS
-Loopbots running
-LOOP: no entry
-GRID: no entry
-Closest: JTO/USD, LTC/USDT
+No entries this scan.
+Why: waiting for cleaner setup.
+Closest LOOP: LTC/USDT, SOL/USDT
+Closest GRID: JTO/USD, PEPE/USD
 ```
 
 The status is sent at most once per day after `8:00 PM` Pacific, and only when no real LOOP or GRID alert fired on that scan.
