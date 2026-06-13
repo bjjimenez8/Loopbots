@@ -14,7 +14,7 @@ The bot does not auto-trade. It scans Kraken, auto-discovers researched hot `USD
 - Sends a `GRID BOT ENTRY` alert when a setup passes the filter.
 - Includes Bitsgap stop loss and take profit settings in the entry alert.
 - Uses cooldown tracking after an alert so it does not spam the same setup.
-- Sends cooldown-limited no-alert status reports when no setups fire.
+- Sends cooldown-limited `BOT STATUS` reports when no setups fire.
 
 ## Live Watchlist
 
@@ -56,19 +56,16 @@ When this alert appears, create a manual Bitsgap GRID bot with those settings.
 
 GRID bots do not send separate exit alerts. Bitsgap handles the stop loss and take profit from the setup alert. LOOP bots are the ones that still use separate exit alerts.
 
-## No-Alert Status
+## Bot Status
 
 If no LOOP or GRID alerts fire, Loopbots can send a cooldown-limited status message:
 
 ```text
-NO ENTRY
-Reason: waiting for cleaner setup.
-LOOP closest:
-- ETH/USDT 69/80 needs trend, bounce, volume
-- DOGE/USDT 49/80 needs trend, volume
-GRID closest:
-- PEPE/USD trend -2.1%, position 0.45 needs cleaner range
-- JTO/USD trend -3.8%, position 0.35 needs cleaner range
+BOT STATUS
+Loopbots running
+LOOP: no entry
+GRID: no entry
+Closest: JTO/USD, LTC/USDT
 ```
 
 The status is sent at most once per day after `8:00 PM` Pacific, and only when no real LOOP or GRID alert fired on that scan.

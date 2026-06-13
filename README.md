@@ -85,7 +85,7 @@ Current Hot GRID profiles:
 
 The scanner can also auto-add new Kraken `USD`/`USDC` coins as `Auto Hot GRID` candidates when they pass stricter live filters. Auto-added coins use `-8% / +35%`, `10` levels, `+8%` take profit, `-5%` stop loss, and strict-sideways filtering. These are opportunity alerts, not per-coin proven profiles yet.
 
-If no LOOP or GRID alerts fire, Loopbots can send one daily `NO ENTRY` message after `8:00 PM` Pacific showing the reason and the closest LOOP and GRID coins.
+If no LOOP or GRID alerts fire, Loopbots can send one daily `BOT STATUS` message after `8:00 PM` Pacific showing that it is running and which coins are closest.
 
 The GRID feature only alerts on filtered sideways setups that were profitable in research. It is not guaranteed profit, and live Bitsgap results can differ from the local backtester.
 

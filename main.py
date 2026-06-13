@@ -243,13 +243,16 @@ class LoopbotsApp:
             ),
         )[:3]
 
+        closest = [row.get("symbol", "n/a") for row in closest_grid[:2]]
+        closest.extend(row.get("symbol", "n/a") for row in closest_loop[:2])
+        closest_text = ", ".join(dict.fromkeys(closest)) if closest else "none"
+
         lines = [
-            "NO ENTRY",
-            "Reason: waiting for cleaner setup.",
-            "LOOP closest:",
-            *self._format_loop_closest(closest_loop),
-            "GRID closest:",
-            *self._format_grid_closest(closest_grid),
+            "BOT STATUS",
+            "Loopbots running",
+            "LOOP: no entry",
+            "GRID: no entry",
+            f"Closest: {closest_text}",
         ]
         return "\n".join(lines)
 
