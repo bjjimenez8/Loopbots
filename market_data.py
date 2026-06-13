@@ -35,6 +35,7 @@ class MarketDataClient:
         self._markets_loaded = False
         self._tickers_cache: dict[str, Any] | None = None
         self._tickers_cache_at: datetime | None = None
+        self._last_discovery_details: list[dict[str, Any]] = []
 
         if config.sandbox and hasattr(self.exchange, "set_sandbox_mode"):
             self.exchange.set_sandbox_mode(True)
@@ -64,12 +65,23 @@ class MarketDataClient:
         self._ensure_markets_loaded()
         tickers = self._get_tickers()
         quote_asset = discovery_config.get("quote_asset", "USDT")
+        hot_config = discovery_config.get("hot_discovery", {})
+        hot_enabled = bool(hot_config.get("enabled", False))
         min_quote_volume = float(discovery_config.get("min_quote_volume_usdt", 2_000_000))
         min_last_price = float(discovery_config.get("min_last_price", 0.05))
         min_volatility_pct = float(discovery_config.get("min_volatility_pct", 2.5))
         max_volatility_pct = float(discovery_config.get("max_volatility_pct", 18.0))
         max_pairs = int(discovery_config.get("max_pairs", 12))
+        max_abs_change_pct = float(hot_config.get("max_abs_change_pct", 18.0))
+        ideal_min_volatility_pct = float(hot_config.get("ideal_min_volatility_pct", max(min_volatility_pct, 2.5)))
+        ideal_max_volatility_pct = float(hot_config.get("ideal_max_volatility_pct", min(max_volatility_pct, 12.0)))
+        hot_min_quote_volume = float(hot_config.get("min_quote_volume_usdt", min_quote_volume))
+        hot_min_volatility_pct = float(hot_config.get("min_volatility_pct", min_volatility_pct))
+        hot_max_volatility_pct = float(hot_config.get("max_volatility_pct", max_volatility_pct))
+        hot_max_pairs = int(hot_config.get("max_pairs", max_pairs))
+        auto_add_new = bool(hot_config.get("auto_add_new", True))
         excluded_bases = {base.upper() for base in discovery_config.get("excluded_base_assets", [])}
+        excluded_bases.update(base.upper() for base in hot_config.get("excluded_base_assets", []))
         preferred_bases = [base.upper() for base in discovery_config.get("preferred_base_assets", [])]
         require_preferred_bases = bool(discovery_config.get("require_preferred_base_assets", False))
         strategy_watchlist_bases = {
@@ -107,8 +119,11 @@ class MarketDataClient:
             quote_volume = self._quote_volume(ticker, last_price)
             high_price = self._coalesce_number(ticker.get("high"), last_price, 0.0)
             low_price = self._coalesce_number(ticker.get("low"), last_price, 0.0)
+            change_pct = self._coalesce_number(ticker.get("percentage"), 0.0)
             is_watchlist = base_asset in strategy_watchlist_bases
             min_required_quote_volume = watchlist_min_quote_volume if is_watchlist else min_quote_volume
+            if hot_enabled and auto_add_new and not is_watchlist:
+                min_required_quote_volume = min(min_required_quote_volume, hot_min_quote_volume)
 
             if quote_volume < min_required_quote_volume:
                 continue
@@ -120,17 +135,37 @@ class MarketDataClient:
             volatility_pct = ((high_price - low_price) / low_price) * 100 if low_price else 0.0
             min_required_volatility = watchlist_min_volatility_pct if is_watchlist else min_volatility_pct
             max_allowed_volatility = watchlist_max_volatility_pct if is_watchlist else max_volatility_pct
+            if hot_enabled and auto_add_new and not is_watchlist:
+                min_required_volatility = min(min_required_volatility, hot_min_volatility_pct)
+                max_allowed_volatility = max(max_allowed_volatility, hot_max_volatility_pct)
             if volatility_pct < min_required_volatility or volatility_pct > max_allowed_volatility:
                 continue
+            if hot_enabled and abs(change_pct) > max_abs_change_pct and not is_watchlist:
+                continue
 
+            score = self._loop_hot_score(
+                quote_volume=quote_volume,
+                volatility_pct=volatility_pct,
+                change_pct=change_pct,
+                preferred=base_asset in preferred_bases,
+                watchlist=is_watchlist,
+                min_quote_volume=min_required_quote_volume,
+                ideal_min_volatility_pct=ideal_min_volatility_pct,
+                ideal_max_volatility_pct=ideal_max_volatility_pct,
+                max_abs_change_pct=max_abs_change_pct,
+            )
             candidates.append(
                 {
                     "symbol": symbol,
                     "base": base_asset,
+                    "last_price": last_price,
                     "quote_volume": quote_volume,
                     "volatility_pct": volatility_pct,
+                    "change_pct": change_pct,
                     "preferred": base_asset in preferred_bases,
                     "watchlist": is_watchlist,
+                    "score": score,
+                    "reason": self._loop_hot_reason(volatility_pct, change_pct, is_watchlist),
                 }
             )
 
@@ -138,13 +173,20 @@ class MarketDataClient:
             key=lambda item: (
                 not item["watchlist"],
                 not item["preferred"],
-                -item["quote_volume"],
+                -item["score"],
                 -item["volatility_pct"],
+                -item["quote_volume"],
             )
         )
-        selected = [item["symbol"] for item in candidates[:max_pairs]]
+        limit = max(hot_max_pairs if hot_enabled else max_pairs, max_pairs)
+        selected_candidates = candidates[:limit]
+        selected = [item["symbol"] for item in selected_candidates[:max_pairs]]
+        self._last_discovery_details = selected_candidates
         LOGGER.info("Discovered %d candidate pairs: %s", len(selected), ", ".join(selected))
         return selected
+
+    def discovery_snapshot(self) -> list[dict[str, Any]]:
+        return list(self._last_discovery_details)
 
     def _ensure_markets_loaded(self) -> None:
         if self._markets_loaded:
@@ -185,3 +227,50 @@ class MarketDataClient:
 
         base_volume = cls._coalesce_number(ticker.get("baseVolume"))
         return base_volume * last_price if last_price > 0 else 0.0
+
+    @staticmethod
+    def _loop_hot_score(
+        quote_volume: float,
+        volatility_pct: float,
+        change_pct: float,
+        preferred: bool,
+        watchlist: bool,
+        min_quote_volume: float,
+        ideal_min_volatility_pct: float,
+        ideal_max_volatility_pct: float,
+        max_abs_change_pct: float,
+    ) -> int:
+        volume_score = min(30.0, (quote_volume / max(min_quote_volume, 1.0)) * 10.0)
+        if ideal_min_volatility_pct <= volatility_pct <= ideal_max_volatility_pct:
+            volatility_score = 30.0
+        else:
+            ideal_midpoint = (ideal_min_volatility_pct + ideal_max_volatility_pct) / 2
+            distance = abs(volatility_pct - ideal_midpoint)
+            width = max(ideal_max_volatility_pct - ideal_min_volatility_pct, 0.01)
+            volatility_score = max(0.0, 30.0 - (distance / width) * 20.0)
+
+        abs_change = abs(change_pct)
+        if abs_change <= max_abs_change_pct * 0.65:
+            move_score = 20.0
+        else:
+            move_score = max(0.0, 20.0 - ((abs_change - max_abs_change_pct * 0.65) / max(max_abs_change_pct, 1.0)) * 30.0)
+
+        priority_score = (12.0 if watchlist else 0.0) + (8.0 if preferred else 0.0)
+        return int(round(max(0.0, min(100.0, volume_score + volatility_score + move_score + priority_score))))
+
+    @staticmethod
+    def _loop_hot_reason(volatility_pct: float, change_pct: float, watchlist: bool) -> str:
+        parts = []
+        if watchlist:
+            parts.append("watchlist")
+        if volatility_pct >= 8:
+            parts.append("hot volatility")
+        elif volatility_pct >= 3:
+            parts.append("active")
+        else:
+            parts.append("quiet")
+        if change_pct >= 0:
+            parts.append(f"+{change_pct:.2f}% 24h")
+        else:
+            parts.append(f"{change_pct:.2f}% 24h")
+        return ", ".join(parts)

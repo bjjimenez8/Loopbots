@@ -37,11 +37,11 @@ class PaperDashboardServer:
         self._server: ThreadingHTTPServer | None = None
         self._thread: Thread | None = None
 
-    def snapshot(self) -> dict[str, Any]:
+    def snapshot(self, include_grid: bool = True, include_loop: bool = True) -> dict[str, Any]:
         payload = self.tracker.snapshot()
-        if self.grid_snapshot_provider is not None:
+        if include_grid and self.grid_snapshot_provider is not None:
             payload["grid_stats"] = self.grid_snapshot_provider()
-        if self.loop_details_provider is not None:
+        if include_loop and self.loop_details_provider is not None:
             payload["loop_details"] = self.loop_details_provider()
         return payload
 
@@ -59,10 +59,10 @@ class PaperDashboardServer:
                     self._send_json(dashboard.snapshot())
                     return
                 if path in {"/", "/paper", "/loop"}:
-                    self._send_html(render_loop_dashboard(dashboard.snapshot(), refresh_seconds))
+                    self._send_html(render_loop_dashboard(dashboard.snapshot(include_grid=False), refresh_seconds))
                     return
                 if path == "/grid":
-                    self._send_html(render_grid_dashboard(dashboard.snapshot(), refresh_seconds))
+                    self._send_html(render_grid_dashboard(dashboard.snapshot(include_loop=False), refresh_seconds))
                     return
                 self.send_error(404, "Not found")
 
@@ -110,7 +110,12 @@ def render_loop_dashboard(snapshot: dict[str, Any], refresh_seconds: int) -> str
 
     active_rows = "".join(_active_row(row) for row in active_trades) or _empty_row(7, "No active alerts.")
     closed_rows = "".join(_closed_row(row) for row in closed_trades) or _empty_row(10, "No closed paper trades yet.")
-    scanned_rows = "".join(_loop_scan_row(symbol) for symbol in loop_details.get("pairs", [])) or _empty_row(2, "No LOOP pairs loaded.")
+    loop_scanned = loop_details.get("scanned", [])
+    if loop_scanned:
+        scanned_rows = "".join(_loop_scan_row(row) for row in loop_scanned)
+    else:
+        scanned_rows = "".join(_loop_scan_row({"symbol": symbol}) for symbol in loop_details.get("pairs", []))
+    scanned_rows = scanned_rows or _empty_row(7, "No LOOP pairs loaded.")
 
     return f"""<!doctype html>
 <html lang="en">
@@ -239,7 +244,7 @@ def render_loop_dashboard(snapshot: dict[str, Any], refresh_seconds: int) -> str
       <h2>Scanned LOOP Pairs</h2>
       <table>
         <thead>
-          <tr><th>Coin</th><th>Status</th></tr>
+          <tr><th>Coin</th><th>Hot Score</th><th>Price</th><th>24h Volatility</th><th>24h Move</th><th>Quote Volume</th><th>Reason</th></tr>
         </thead>
         <tbody>{scanned_rows}</tbody>
       </table>
@@ -479,11 +484,19 @@ def _closed_row(row: dict[str, Any]) -> str:
     )
 
 
-def _loop_scan_row(symbol: str) -> str:
+def _loop_scan_row(row: dict[str, Any]) -> str:
+    score = row.get("score", "")
+    score_text = f"{int(float(score))}/100" if score != "" else "scanned"
+    quote_volume = float(row.get("quote_volume", 0.0) or 0.0)
     return (
         "<tr>"
-        f"<td>{_escape(symbol)}</td>"
-        '<td><span class="pill">scanned every cycle</span></td>'
+        f"<td>{_escape(row.get('symbol', ''))}</td>"
+        f"<td>{_escape(score_text)}</td>"
+        f"<td>{_price(row.get('last_price', 0.0))}</td>"
+        f"<td>{float(row.get('volatility_pct', 0.0) or 0.0):.2f}%</td>"
+        f"<td>{float(row.get('change_pct', 0.0) or 0.0):+.2f}%</td>"
+        f"<td>${quote_volume:,.0f}</td>"
+        f"<td>{_escape(row.get('reason', 'scanned every cycle'))}</td>"
         "</tr>"
     )
 

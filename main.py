@@ -116,7 +116,10 @@ class LoopbotsApp:
                 refresh_seconds=int(dashboard_config.get("refresh_seconds", 30)),
             ),
             grid_snapshot_provider=lambda: self.grid_watch.paper_snapshot(include_diagnostics=True),
-            loop_details_provider=lambda: {"pairs": list(self.pairs)},
+            loop_details_provider=lambda: {
+                "pairs": list(self.pairs),
+                "scanned": self.market_data.discovery_snapshot(),
+            },
         )
 
     def start_dashboard(self) -> None:

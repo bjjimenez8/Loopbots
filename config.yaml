@@ -22,6 +22,30 @@ pair_discovery:
   min_volatility_pct: 1.8
   max_volatility_pct: 18.0
   max_pairs: 20
+  hot_discovery:
+    enabled: true
+    auto_add_new: true
+    min_quote_volume_usdt: 40000
+    min_volatility_pct: 1.8
+    max_volatility_pct: 22.0
+    ideal_min_volatility_pct: 2.5
+    ideal_max_volatility_pct: 12.0
+    max_abs_change_pct: 18.0
+    max_pairs: 30
+    excluded_base_assets:
+      - USDT
+      - USDC
+      - DAI
+      - PYUSD
+      - EUR
+      - USD
+      - GBP
+      - AUD
+      - CAD
+      - JPY
+      - USDG
+      - USDE
+      - XAUT
   require_preferred_base_assets: false
   preferred_base_assets:
     - ETH

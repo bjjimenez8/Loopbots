@@ -9,7 +9,7 @@ It does not send "no trade" messages.
 
 ## Monitored Pairs
 
-Loopbots can scan a configured fallback list or automatically discover liquid, volatile `USDT` spot pairs from the live exchange.
+Loopbots can scan a configured fallback list or automatically discover hot, liquid, volatile `USDT` spot pairs from the live exchange. The hot LOOP scanner scores candidates by quote volume, 24h volatility, 24h move quality, and watchlist priority while avoiding overextended moves.
 
 ## Project Structure
 
@@ -138,7 +138,7 @@ Paper tracking uses the same alerts the bot sends:
 - `GRID BOT ENTRY` opens a GRID paper trade.
 - GRID take profit or stop loss closes the GRID paper trade silently for stats.
 
-Open `http://127.0.0.1:3000/loop` while the bot is running to see LOOP scanned pairs, active LOOP alerts, closed LOOP paper trades, LOOP wins/losses, win rate, estimated net return after the fee assumption, average net per trade, average hold time, and best/worst symbols. Open `http://127.0.0.1:3000/grid` for GRID scanned setups, readiness scores, active GRID paper trades, closed GRID paper trades, GRID win rate, and GRID net return.
+Open `http://127.0.0.1:3000/loop` while the bot is running to see hot-scanned LOOP pairs, hot score, price, 24h volatility, 24h move, quote volume, active LOOP alerts, closed LOOP paper trades, LOOP wins/losses, win rate, estimated net return after the fee assumption, average net per trade, average hold time, and best/worst symbols. Open `http://127.0.0.1:3000/grid` for GRID scanned setups, readiness scores, active GRID paper trades, closed GRID paper trades, GRID win rate, and GRID net return.
 
 ## Hetzner Auto Deploy
 
