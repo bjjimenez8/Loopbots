@@ -351,30 +351,102 @@ class GridWatchService:
             )
         return results
 
-    def paper_snapshot(self) -> dict[str, Any]:
+    def paper_snapshot(self, include_diagnostics: bool = False) -> dict[str, Any]:
         rows = self._read_history()
         closed_rows = [row for row in rows if row.get("event") in {"GRID_TAKE_PROFIT", "GRID_STOP_LOSS"}]
         state = self._load_state()
-        active_count = sum(
-            1
-            for item in state.values()
-            if isinstance(item, dict)
-            and isinstance(item.get("active_paper"), dict)
-            and item["active_paper"].get("status") == "ACTIVE"
-        )
+        active_trades = self._active_paper_records(state)
+        closed_trades = [self._closed_paper_record(row) for row in closed_rows]
+        closed_trades.sort(key=lambda row: row.get("event_at", ""), reverse=True)
         wins = sum(1 for row in closed_rows if row.get("event") == "GRID_TAKE_PROFIT")
         losses = sum(1 for row in closed_rows if row.get("event") == "GRID_STOP_LOSS")
         net_returns = [_to_float(row.get("net_return_pct")) for row in closed_rows]
-        return {
+        snapshot = {
             "entries": sum(1 for row in rows if row.get("event") == "GRID_ENTRY"),
             "closed": len(closed_rows),
-            "active": max(active_count, 0),
+            "active": len(active_trades),
             "wins": wins,
             "losses": losses,
             "win_rate_pct": (wins / len(closed_rows) * 100) if closed_rows else 0.0,
             "net_return_pct": sum(net_returns),
             "avg_net_return_pct": (sum(net_returns) / len(closed_rows)) if closed_rows else 0.0,
+            "active_trades": active_trades,
+            "closed_trades": closed_trades,
         }
+        if include_diagnostics:
+            snapshot["scanned"] = self._grid_scan_records(state)
+        return snapshot
+
+    def _active_paper_records(self, state: dict[str, Any]) -> list[dict[str, Any]]:
+        records = []
+        for item in state.values():
+            if not isinstance(item, dict) or not isinstance(item.get("active_paper"), dict):
+                continue
+            active = item["active_paper"]
+            if active.get("status") != "ACTIVE":
+                continue
+            records.append(
+                {
+                    "symbol": active.get("symbol", ""),
+                    "preset_name": active.get("preset_name", ""),
+                    "entry_price": _to_float(active.get("entry_price")),
+                    "take_profit_price": _to_float(active.get("take_profit_price")),
+                    "stop_loss_price": _to_float(active.get("stop_loss_price")),
+                    "grid_step_pct": active.get("grid_step_pct", ""),
+                    "levels": active.get("levels", ""),
+                    "opened_at": active.get("opened_at", ""),
+                }
+            )
+        records.sort(key=lambda row: row.get("opened_at", ""), reverse=True)
+        return records
+
+    @staticmethod
+    def _closed_paper_record(row: dict[str, str]) -> dict[str, Any]:
+        return {
+            "event": row.get("event", ""),
+            "symbol": row.get("symbol", ""),
+            "preset_name": row.get("preset_name", ""),
+            "entry_price": _to_float(row.get("entry_price")),
+            "exit_price": _to_float(row.get("exit_price")),
+            "take_profit_price": _to_float(row.get("take_profit_price")),
+            "stop_loss_price": _to_float(row.get("stop_loss_price")),
+            "grid_step_pct": row.get("grid_step_pct", ""),
+            "levels": row.get("levels", ""),
+            "net_return_pct": _to_float(row.get("net_return_pct")),
+            "opened_at": row.get("opened_at", ""),
+            "event_at": row.get("event_at", ""),
+            "exit_reason": row.get("exit_reason", ""),
+        }
+
+    def _grid_scan_records(self, state: dict[str, Any]) -> list[dict[str, Any]]:
+        active_symbols = {
+            str(item.get("active_paper", {}).get("symbol", ""))
+            for item in state.values()
+            if isinstance(item, dict)
+            and isinstance(item.get("active_paper"), dict)
+            and item["active_paper"].get("status") == "ACTIVE"
+        }
+        try:
+            rows = self.diagnostics()
+        except Exception:
+            LOGGER.exception("Failed to build GRID dashboard diagnostics")
+            return []
+
+        records = []
+        for row in rows:
+            records.append(
+                {
+                    "symbol": row.get("symbol", ""),
+                    "score": int(_to_float(row.get("score"))),
+                    "ready": bool(row.get("ready")),
+                    "active": str(row.get("symbol", "")) in active_symbols,
+                    "cooldown": bool(row.get("cooldown")),
+                    "current_price": _to_float(row.get("current_price")),
+                    "reason": row.get("reason", ""),
+                }
+            )
+        records.sort(key=lambda row: (not row["ready"], -row["score"], row["symbol"]))
+        return records
 
     def _fetch_candles(self, symbol: str) -> pd.DataFrame:
         rows = self.exchange.fetch_ohlcv(symbol, timeframe=self.config.timeframe, limit=self.config.candle_limit)
