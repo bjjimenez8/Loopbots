@@ -115,6 +115,7 @@ class LoopbotsApp:
                 port=int(dashboard_config.get("port", 3000)),
                 refresh_seconds=int(dashboard_config.get("refresh_seconds", 30)),
             ),
+            grid_snapshot_provider=self.grid_watch.paper_snapshot,
         )
 
     def start_dashboard(self) -> None:
@@ -176,15 +177,20 @@ class LoopbotsApp:
         self._prune_paper_history()
 
     async def scan_grid_watch(self) -> dict[str, int]:
-        counts = {"entries": 0}
+        counts = {"entries": 0, "paper_closed": 0}
         if not self.grid_watch.config.enabled:
             return counts
 
         try:
+            closed_paper = self.grid_watch.update_paper_trades()
             alerts = self.grid_watch.find_alerts()
         except Exception:
             logging.exception("Failed to scan GRID watch")
             return counts
+
+        counts["paper_closed"] = len(closed_paper)
+        if closed_paper:
+            logging.info("Closed %d GRID paper trades", len(closed_paper))
 
         for alert in alerts:
             await self.telegram.send_grid_alert(alert)

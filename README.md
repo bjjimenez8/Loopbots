@@ -73,6 +73,8 @@ GRID alerts are manual Bitsgap setup alerts. The bot does not create the bot for
 
 GRID bots do not send separate exit alerts. Bitsgap's GRID stop loss and take profit settings are included in the entry alert. LOOP bots still use separate exit alerts.
 
+GRID alerts are also paper-tracked internally. After a `GRID BOT ENTRY`, Loopbots watches future GRID candles and silently records a paper `GRID_TAKE_PROFIT` or `GRID_STOP_LOSS` when the alert's TP or SL price is touched. These paper closes are for stats only and do not send Telegram exit alerts.
+
 Current Hot GRID profiles:
 
 | Coin | Quote | Range | Levels | Historical WR | Est. monthly | Filter |
@@ -133,8 +135,10 @@ Paper tracking uses the same alerts the bot sends:
 - `ENTER` opens a paper trade.
 - Take profit closes it as a paper win without sending a separate Telegram exit.
 - Safety exit closes it as a paper loss and sends the normal `EXIT` alert.
+- `GRID BOT ENTRY` opens a GRID paper trade.
+- GRID take profit or stop loss closes the GRID paper trade silently for stats.
 
-Open `http://127.0.0.1:3000` while the bot is running to see active alerts, closed paper trades, wins, losses, win rate, estimated net return after the fee assumption, average net per trade, average hold time, and best/worst symbols.
+Open `http://127.0.0.1:3000` while the bot is running to see active LOOP alerts, closed LOOP paper trades, LOOP wins/losses, win rate, estimated net return after the fee assumption, average net per trade, average hold time, and best/worst symbols. The same dashboard also shows GRID paper closed count, GRID win rate, GRID net return, and active GRID paper trades.
 
 ## Hetzner Auto Deploy
 

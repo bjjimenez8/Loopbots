@@ -13,6 +13,8 @@ The bot does not auto-trade. It scans Kraken, auto-discovers researched hot `USD
 - Avoids obvious breakdowns and strong one-way moves.
 - Sends a `GRID BOT ENTRY` alert when a setup passes the filter.
 - Includes Bitsgap stop loss and take profit settings in the entry alert.
+- Opens an internal GRID paper trade after each entry alert.
+- Silently records paper GRID take-profit or stop-loss closes for stats.
 - Uses cooldown tracking after an alert so it does not spam the same setup.
 - Sends cooldown-limited `BOT STATUS` reports when no setups fire.
 
@@ -54,7 +56,7 @@ Take Profit: On (+8%)
 
 When this alert appears, create a manual Bitsgap GRID bot with those settings.
 
-GRID bots do not send separate exit alerts. Bitsgap handles the stop loss and take profit from the setup alert. LOOP bots are the ones that still use separate exit alerts.
+GRID bots do not send separate exit alerts. Bitsgap handles the stop loss and take profit from the setup alert. Loopbots still paper-tracks those GRID TP/SL outcomes internally. LOOP bots are the ones that still use separate Telegram exit alerts.
 
 ## Bot Status
 

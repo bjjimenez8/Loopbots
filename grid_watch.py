@@ -108,6 +108,7 @@ class GridWatchConfig:
     timeframe: str
     candle_limit: int
     investment_usdt: float
+    paper_fee_pct: float
     filter_lookback_days: float
     cooldown_days: float
     state_file: str
@@ -211,6 +212,7 @@ class GridWatchService:
                 timeframe=str(raw_config.get("timeframe", "1h")),
                 candle_limit=int(raw_config.get("candle_limit", 360)),
                 investment_usdt=float(raw_config.get("investment_usdt", 5000.0)),
+                paper_fee_pct=float(raw_config.get("paper_fee_pct", 0.2)),
                 filter_lookback_days=float(raw_config.get("filter_lookback_days", 14.0)),
                 cooldown_days=float(raw_config.get("cooldown_days", 14.0)),
                 state_file=state_file,
@@ -248,12 +250,63 @@ class GridWatchService:
                 "last_alert_at": now,
                 "symbol": setup.symbol,
                 "preset_name": setup.preset_name,
+                "active_paper": self._build_active_paper(alert, now),
             }
             self._append_history(self._build_entry_history_row(alert, now))
 
         if alerts:
             self._save_state(state)
         return alerts
+
+    def update_paper_trades(self) -> list[dict[str, Any]]:
+        if not self.config.enabled:
+            return []
+
+        state = self._load_state()
+        closed: list[dict[str, Any]] = []
+        changed = False
+        for key, state_item in state.items():
+            if not isinstance(state_item, dict):
+                continue
+            active = state_item.get("active_paper")
+            if not isinstance(active, dict) or active.get("status") != "ACTIVE":
+                continue
+
+            symbol = str(active.get("symbol") or state_item.get("symbol") or "")
+            if not symbol:
+                continue
+
+            try:
+                candles = self._fetch_candles(symbol)
+            except Exception:
+                LOGGER.exception("Failed to update GRID paper trade for %s", symbol)
+                continue
+
+            close_row = self._paper_close_row(active, candles)
+            if close_row is None:
+                latest_timestamp = _latest_timestamp(candles)
+                if latest_timestamp:
+                    active["last_checked_timestamp"] = latest_timestamp
+                    state_item["active_paper"] = active
+                    state[key] = state_item
+                    changed = True
+                continue
+
+            state_item["active_paper"] = {
+                **active,
+                "status": "CLOSED",
+                "closed_at": close_row["event_at"],
+                "exit_price": close_row["exit_price"],
+                "exit_reason": close_row["exit_reason"],
+            }
+            state[key] = state_item
+            self._append_history(close_row)
+            closed.append(close_row)
+            changed = True
+
+        if changed:
+            self._save_state(state)
+        return closed
 
     def diagnostics(self) -> list[dict[str, Any]]:
         if not self.config.enabled:
@@ -301,7 +354,14 @@ class GridWatchService:
     def paper_snapshot(self) -> dict[str, Any]:
         rows = self._read_history()
         closed_rows = [row for row in rows if row.get("event") in {"GRID_TAKE_PROFIT", "GRID_STOP_LOSS"}]
-        active_count = sum(1 for row in rows if row.get("event") == "GRID_ENTRY") - len(closed_rows)
+        state = self._load_state()
+        active_count = sum(
+            1
+            for item in state.values()
+            if isinstance(item, dict)
+            and isinstance(item.get("active_paper"), dict)
+            and item["active_paper"].get("status") == "ACTIVE"
+        )
         wins = sum(1 for row in closed_rows if row.get("event") == "GRID_TAKE_PROFIT")
         losses = sum(1 for row in closed_rows if row.get("event") == "GRID_STOP_LOSS")
         net_returns = [_to_float(row.get("net_return_pct")) for row in closed_rows]
@@ -548,8 +608,9 @@ class GridWatchService:
             "investment_usdt": _fmt_number(self.config.investment_usdt),
             "low_price": _fmt_price(low_price),
             "high_price": _fmt_price(high_price),
-            "stop_loss_price": stop_loss_price,
             "take_profit_price": take_profit_price,
+            "stop_loss_price": stop_loss_price,
+            "signal_candle_timestamp": _timestamp_to_iso(candles["timestamp"].iloc[-1]),
             "grid_step_pct": _fmt_grid_step(grid_step_pct),
             "levels": setup.levels,
             "order_size_currency": setup.symbol.split("/")[-1],
@@ -602,10 +663,24 @@ class GridWatchService:
 
     def _ensure_history_file(self) -> None:
         if self._history_path.exists():
+            self._migrate_history_file()
             return
         with self._history_path.open("w", newline="", encoding="utf-8") as file:
             writer = csv.DictWriter(file, fieldnames=self._history_fields)
             writer.writeheader()
+
+    def _migrate_history_file(self) -> None:
+        with self._history_path.open("r", newline="", encoding="utf-8") as file:
+            reader = csv.DictReader(file)
+            if reader.fieldnames == self._history_fields:
+                return
+            rows = list(reader)
+
+        with self._history_path.open("w", newline="", encoding="utf-8") as file:
+            writer = csv.DictWriter(file, fieldnames=self._history_fields)
+            writer.writeheader()
+            for row in rows:
+                writer.writerow({field: row.get(field, "") for field in self._history_fields})
 
     def _append_history(self, row: dict[str, Any]) -> None:
         normalized = {field: row.get(field, "") for field in self._history_fields}
@@ -631,6 +706,8 @@ class GridWatchService:
             "exit_price",
             "low_price",
             "high_price",
+            "take_profit_price",
+            "stop_loss_price",
             "grid_step_pct",
             "levels",
             "take_profit_pct",
@@ -652,12 +729,99 @@ class GridWatchService:
             "entry_price": alert.get("entry_price", ""),
             "low_price": alert.get("low_price", ""),
             "high_price": alert.get("high_price", ""),
+            "take_profit_price": alert.get("take_profit_price", ""),
+            "stop_loss_price": alert.get("stop_loss_price", ""),
             "grid_step_pct": alert.get("grid_step_pct", ""),
             "levels": alert.get("levels", ""),
             "take_profit_pct": alert.get("take_profit_pct", ""),
             "stop_loss_pct": alert.get("stop_loss_pct", ""),
             "opened_at": event_at,
         }
+
+    @staticmethod
+    def _build_active_paper(alert: dict[str, Any], opened_at: str) -> dict[str, Any]:
+        signal_timestamp = str(alert.get("signal_candle_timestamp") or "")
+        return {
+            "status": "ACTIVE",
+            "symbol": alert.get("symbol", ""),
+            "preset_name": alert.get("preset_name", ""),
+            "exchange": alert.get("exchange", ""),
+            "entry_price": alert.get("entry_price", ""),
+            "low_price": alert.get("low_price", ""),
+            "high_price": alert.get("high_price", ""),
+            "take_profit_price": alert.get("take_profit_price", ""),
+            "stop_loss_price": alert.get("stop_loss_price", ""),
+            "grid_step_pct": alert.get("grid_step_pct", ""),
+            "levels": alert.get("levels", ""),
+            "take_profit_pct": alert.get("take_profit_pct", ""),
+            "stop_loss_pct": alert.get("stop_loss_pct", ""),
+            "opened_at": opened_at,
+            "last_checked_timestamp": signal_timestamp,
+        }
+
+    def _paper_close_row(self, active: dict[str, Any], candles: pd.DataFrame) -> dict[str, Any] | None:
+        last_checked = _parse_timestamp(active.get("last_checked_timestamp"))
+        if last_checked is None:
+            last_checked = _parse_timestamp(active.get("opened_at"))
+
+        check_rows = candles
+        if last_checked is not None:
+            check_rows = candles[candles["timestamp"] > last_checked]
+        if check_rows.empty:
+            return None
+
+        take_profit_price = _to_float(active.get("take_profit_price"))
+        stop_loss_price = _to_float(active.get("stop_loss_price"))
+        if take_profit_price <= 0 or stop_loss_price <= 0:
+            return None
+
+        for _, candle in check_rows.iterrows():
+            exit_event = self._paper_exit_event(candle, take_profit_price, stop_loss_price)
+            if exit_event is None:
+                continue
+
+            event, exit_price, exit_reason = exit_event
+            entry_price = _to_float(active.get("entry_price"))
+            gross_return_pct = ((exit_price / entry_price) - 1) * 100 if entry_price > 0 else 0.0
+            net_return_pct = gross_return_pct - self.config.paper_fee_pct
+            return {
+                "event": event,
+                "event_at": _timestamp_to_iso(candle["timestamp"]),
+                "symbol": active.get("symbol", ""),
+                "preset_name": active.get("preset_name", ""),
+                "exchange": active.get("exchange", ""),
+                "entry_price": active.get("entry_price", ""),
+                "exit_price": exit_price,
+                "low_price": active.get("low_price", ""),
+                "high_price": active.get("high_price", ""),
+                "take_profit_price": active.get("take_profit_price", ""),
+                "stop_loss_price": active.get("stop_loss_price", ""),
+                "grid_step_pct": active.get("grid_step_pct", ""),
+                "levels": active.get("levels", ""),
+                "take_profit_pct": active.get("take_profit_pct", ""),
+                "stop_loss_pct": active.get("stop_loss_pct", ""),
+                "gross_return_pct": round(gross_return_pct, 4),
+                "net_return_pct": round(net_return_pct, 4),
+                "opened_at": active.get("opened_at", ""),
+                "exit_reason": exit_reason,
+            }
+        return None
+
+    @staticmethod
+    def _paper_exit_event(
+        candle: pd.Series,
+        take_profit_price: float,
+        stop_loss_price: float,
+    ) -> tuple[str, float, str] | None:
+        high_price = float(candle["high"])
+        low_price = float(candle["low"])
+        if low_price <= stop_loss_price and high_price >= take_profit_price:
+            return "GRID_STOP_LOSS", stop_loss_price, "paper stop loss touched first by conservative rule"
+        if low_price <= stop_loss_price:
+            return "GRID_STOP_LOSS", stop_loss_price, "paper stop loss touched"
+        if high_price >= take_profit_price:
+            return "GRID_TAKE_PROFIT", take_profit_price, "paper take profit touched"
+        return None
 
 
 def _fmt_number(value: float) -> str:
@@ -698,6 +862,33 @@ def _quote_volume(ticker: dict[str, Any], last_price: float) -> float:
         return quote_volume
     base_volume = _number(ticker.get("baseVolume"))
     return base_volume * last_price if base_volume > 0 and last_price > 0 else 0.0
+
+
+def _latest_timestamp(candles: pd.DataFrame) -> str:
+    if candles.empty:
+        return ""
+    return _timestamp_to_iso(candles["timestamp"].iloc[-1])
+
+
+def _timestamp_to_iso(value: Any) -> str:
+    timestamp = pd.Timestamp(value)
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.tz_localize("UTC")
+    return timestamp.tz_convert("UTC").isoformat()
+
+
+def _parse_timestamp(value: Any) -> pd.Timestamp | None:
+    if not value:
+        return None
+    try:
+        timestamp = pd.Timestamp(value)
+    except (TypeError, ValueError):
+        return None
+    if pd.isna(timestamp):
+        return None
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.tz_localize("UTC")
+    return timestamp.tz_convert("UTC")
 
 
 def _grid_readiness_score(

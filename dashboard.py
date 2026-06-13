@@ -6,7 +6,7 @@ import logging
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
-from typing import Any
+from typing import Any, Callable
 
 from paper_tracker import PaperTracker
 
@@ -23,26 +23,38 @@ class DashboardConfig:
 
 
 class PaperDashboardServer:
-    def __init__(self, tracker: PaperTracker, config: DashboardConfig) -> None:
+    def __init__(
+        self,
+        tracker: PaperTracker,
+        config: DashboardConfig,
+        grid_snapshot_provider: Callable[[], dict[str, Any]] | None = None,
+    ) -> None:
         self.tracker = tracker
         self.config = config
+        self.grid_snapshot_provider = grid_snapshot_provider
         self._server: ThreadingHTTPServer | None = None
         self._thread: Thread | None = None
+
+    def snapshot(self) -> dict[str, Any]:
+        payload = self.tracker.snapshot()
+        if self.grid_snapshot_provider is not None:
+            payload["grid_stats"] = self.grid_snapshot_provider()
+        return payload
 
     def start(self) -> None:
         if not self.config.enabled or self._server is not None:
             return
 
-        tracker = self.tracker
+        dashboard = self
         refresh_seconds = self.config.refresh_seconds
 
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self) -> None:
                 if self.path == "/api/paper":
-                    self._send_json(tracker.snapshot())
+                    self._send_json(dashboard.snapshot())
                     return
                 if self.path in {"/", "/paper"}:
-                    self._send_html(render_dashboard(tracker.snapshot(), refresh_seconds))
+                    self._send_html(render_dashboard(dashboard.snapshot(), refresh_seconds))
                     return
                 self.send_error(404, "Not found")
 
@@ -84,6 +96,7 @@ class PaperDashboardServer:
 def render_dashboard(snapshot: dict[str, Any], refresh_seconds: int) -> str:
     window = snapshot["window_stats"]
     all_time = snapshot["all_stats"]
+    grid_stats = snapshot.get("grid_stats", {})
     active_trades = snapshot["active_trades"]
     closed_trades = snapshot["closed_trades"]
 
@@ -196,6 +209,10 @@ def render_dashboard(snapshot: dict[str, Any], refresh_seconds: int) -> str:
       {_metric("Avg Hold", f"{window['avg_hold_hours']:.2f}h", "Closed alerts")}
       {_metric("All-Time WR", _pct(all_time["win_rate_pct"]), "Retained history")}
       {_metric("All-Time Avg", _signed_pct(all_time["avg_net_return_pct"]), "Retained history", all_time["avg_net_return_pct"])}
+      {_metric("GRID Closed", grid_stats.get("closed", 0), "Paper GRID trades")}
+      {_metric("GRID WR", _pct(grid_stats.get("win_rate_pct", 0.0)), "TP / closed GRID")}
+      {_metric("GRID Net", _signed_pct(grid_stats.get("net_return_pct", 0.0)), "Paper TP/SL net", grid_stats.get("net_return_pct", 0.0))}
+      {_metric("GRID Active", grid_stats.get("active", 0), "Open GRID paper")}
     </div>
 
     <section>
