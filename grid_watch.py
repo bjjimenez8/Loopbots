@@ -517,6 +517,13 @@ class GridWatchService:
         return {
             "passes": not reasons,
             "reasons": reasons,
+            "score": _grid_readiness_score(
+                trend_return_pct=trend_return_pct,
+                range_pct=range_pct,
+                directional_efficiency=directional_efficiency,
+                range_position=range_position,
+                launch_filter=launch_filter,
+            ),
             "trend_return_pct": round(trend_return_pct, 2),
             "range_pct": round(range_pct, 2),
             "directional_efficiency": round(directional_efficiency, 2),
@@ -691,6 +698,50 @@ def _quote_volume(ticker: dict[str, Any], last_price: float) -> float:
         return quote_volume
     base_volume = _number(ticker.get("baseVolume"))
     return base_volume * last_price if base_volume > 0 and last_price > 0 else 0.0
+
+
+def _grid_readiness_score(
+    trend_return_pct: float,
+    range_pct: float,
+    directional_efficiency: float,
+    range_position: float,
+    launch_filter: str,
+) -> int:
+    if launch_filter == "sideways":
+        min_trend_pct, max_trend_pct = -8.0, 12.0
+        min_range_pct, max_range_pct = 5.0, 35.0
+        max_directional_efficiency = 0.55
+        min_range_position, max_range_position = 0.15, 0.90
+    else:
+        min_trend_pct, max_trend_pct = -5.0, 8.0
+        min_range_pct, max_range_pct = 5.0, 25.0
+        max_directional_efficiency = 0.40
+        min_range_position, max_range_position = 0.20, 0.80
+
+    trend_score = _range_score(trend_return_pct, min_trend_pct, max_trend_pct)
+    range_score = _range_score(range_pct, min_range_pct, max_range_pct)
+    directional_score = max(0.0, min(1.0, 1 - (directional_efficiency / max_directional_efficiency)))
+    position_score = _range_score(range_position, min_range_position, max_range_position)
+    total = (
+        trend_score * 35
+        + range_score * 25
+        + directional_score * 20
+        + position_score * 20
+    )
+    return int(round(max(0.0, min(100.0, total))))
+
+
+def _range_score(value: float, minimum: float, maximum: float) -> float:
+    if minimum <= value <= maximum:
+        midpoint = (minimum + maximum) / 2
+        half_width = max((maximum - minimum) / 2, 0.000001)
+        return max(0.6, 1 - (abs(value - midpoint) / half_width) * 0.4)
+    if value < minimum:
+        distance = minimum - value
+    else:
+        distance = value - maximum
+    width = max(maximum - minimum, 0.000001)
+    return max(0.0, 0.6 - (distance / width))
 
 
 def _is_plain_symbol(text: str) -> bool:

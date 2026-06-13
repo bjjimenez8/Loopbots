@@ -237,24 +237,25 @@ class LoopbotsApp:
         grid_diagnostics = self.grid_watch.diagnostics() if self.grid_watch.config.enabled else []
         closest_grid = sorted(
             grid_diagnostics,
-            key=lambda row: (
-                abs(float(row.get("trend_return_pct", 999))),
-                abs(float(row.get("directional_efficiency", 999))),
-            ),
+            key=lambda row: row.get("score", 0),
+            reverse=True,
         )[:3]
 
         lines = [
             "BOT STATUS",
             "No entries this scan.",
             "Why: waiting for cleaner setup.",
-            f"Closest LOOP: {self._format_status_names(closest_loop)}",
-            f"Closest GRID: {self._format_status_names(closest_grid)}",
+            f"Closest LOOP: {self._format_status_names(closest_loop, max_score=80)}",
+            f"Closest GRID: {self._format_status_names(closest_grid, max_score=100)}",
         ]
         return "\n".join(lines)
 
     @staticmethod
-    def _format_status_names(rows: list[dict[str, Any]]) -> str:
-        names = [str(row.get("symbol", "n/a")) for row in rows[:2]]
+    def _format_status_names(rows: list[dict[str, Any]], max_score: int) -> str:
+        names = [
+            f"{row.get('symbol', 'n/a')} {max(0, min(100, round((float(row.get('score', 0)) / max_score) * 100)))}/100"
+            for row in rows[:2]
+        ]
         return ", ".join(names) if names else "none"
 
     @staticmethod
