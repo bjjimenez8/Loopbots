@@ -84,8 +84,11 @@ Current Hot GRID profiles:
 | `INJ` | `USD` | -8% / +50% | 10 | 63.16% | +9.79% | sideways |
 | `XCN` | `USD` | -8% / +35% | 10 | 72.22% | +14.99% | sideways |
 | `ETH` | `USDC` | -5% / +50% | 10 | 63.33% | +9.57% | strict sideways |
+| `IDEX` | `USD` | -10% / +50% | 10 | 100% | +29.66% | experimental sideways |
 
 The scanner can also auto-add new Kraken `USD`/`USDC` coins as `Auto Hot GRID` candidates when they pass stricter live filters. Auto-added coins use `-8% / +35%`, `10` levels, `+8%` take profit, `-5%` stop loss, and strict-sideways filtering. These are opportunity alerts, not per-coin proven profiles yet.
+
+Experimental GRID profiles are watched and paper-tracked automatically, but should start small until live paper and real Bitsgap results confirm the backtest.
 
 If no LOOP or GRID alerts fire, Loopbots can send one daily `BOT STATUS` message after `8:00 PM` Pacific showing that it is running and which coins are closest.
 

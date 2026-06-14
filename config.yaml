@@ -118,6 +118,7 @@ grid_watch:
       - USD
       - USDC
     min_quote_volume: 100000
+    profile_min_quote_volume: 40000
     min_last_price: 0.000001
     min_volatility_pct: 2
     max_volatility_pct: 80
@@ -241,6 +242,23 @@ grid_watch:
         historical_worst_drawdown_pct: -9.62
         historical_alerts_per_month: 6
         score: 78
+      - base_asset: IDEX
+        allowed_quotes:
+          - USD
+        preset_name: Experimental IDEX GRID
+        lower_pct: 10
+        upper_pct: 50
+        levels: 10
+        take_profit_pct: 8
+        stop_loss_pct: 5
+        launch_filter: sideways
+        historical_win_rate_pct: 100
+        historical_avg_return_pct: 13.84
+        historical_monthly_pct: 29.66
+        historical_avg_drawdown_pct: -3.77
+        historical_worst_drawdown_pct: -5.58
+        historical_alerts_per_month: 3
+        score: 72
 
 status_report:
   enabled: true

@@ -407,7 +407,7 @@ def render_grid_dashboard(snapshot: dict[str, Any], refresh_seconds: int) -> str
       <h2>Scanned GRID Setups</h2>
       <table>
         <thead>
-          <tr><th>Coin</th><th>Score</th><th>Status</th><th>Price</th><th>Cooldown</th><th>Reason</th></tr>
+          <tr><th>Coin</th><th>Preset</th><th>Type</th><th>Score</th><th>Status</th><th>Price</th><th>Hist. Monthly</th><th>Cooldown</th><th>Reason</th></tr>
         </thead>
         <tbody>{scanned_rows}</tbody>
       </table>
@@ -506,12 +506,16 @@ def _grid_scan_row(row: dict[str, Any]) -> str:
     if row.get("active"):
         status = "Active paper"
     status_class = "good" if row.get("ready") else ""
+    setup_type = "Experimental" if row.get("experimental") else "Proven"
     return (
         "<tr>"
         f"<td>{_escape(row.get('symbol', ''))}</td>"
+        f"<td><span class=\"pill\">{_escape(row.get('preset_name', ''))}</span></td>"
+        f"<td>{_escape(setup_type)}</td>"
         f"<td>{int(float(row.get('score', 0)))}/100</td>"
         f'<td class="{status_class}">{_escape(status)}</td>'
         f"<td>{_price(row.get('current_price', 0.0))}</td>"
+        f"<td>{float(row.get('historical_monthly_pct', 0.0) or 0.0):+.2f}%</td>"
         f"<td>{'yes' if row.get('cooldown') else 'no'}</td>"
         f"<td>{_escape(row.get('reason', ''))}</td>"
         "</tr>"

@@ -29,8 +29,11 @@ These are the current Hot GRID profiles in `config.yaml`:
 | `INJ` | `USD` | -8% / +50% | 10 | 63.16% | +9.79% | -9.06% | sideways |
 | `XCN` | `USD` | -8% / +35% | 10 | 72.22% | +14.99% | -10.22% | sideways |
 | `ETH` | `USDC` | -5% / +50% | 10 | 63.33% | +9.57% | -9.62% | strict sideways |
+| `IDEX` | `USD` | -10% / +50% | 10 | 100% | +29.66% | -5.58% | experimental sideways |
 
 These are not random coins. They were added because the filtered backtest looked better than the other Kraken pairs tested. Coins that did not hold up were left out.
+
+`IDEX/USD` is marked experimental because the backtest result was strong but only had `3` valid historical starts. It is watched and paper-tracked automatically, but should not be sized like a proven setup until live paper and real Bitsgap results confirm it.
 
 The scanner also has an `Auto Hot GRID` lane for new Kraken `USD`/`USDC` coins. Those candidates must pass stricter volume, volatility, plain-symbol, and strict-sideways filters before alerting. They use `-8% / +35%`, `10` levels, `+8%` take profit, and `-5%` stop loss. They are not treated as per-coin proven profiles until research confirms them.
 

@@ -79,6 +79,7 @@ class HotGridDiscoveryConfig:
     enabled: bool
     quote_assets: list[str]
     min_quote_volume: float
+    profile_min_quote_volume: float
     min_last_price: float
     min_volatility_pct: float
     max_volatility_pct: float
@@ -179,6 +180,7 @@ class GridWatchService:
             enabled=bool(hot_raw.get("enabled", False)),
             quote_assets=[str(quote).upper() for quote in hot_raw.get("quote_assets", ["USD", "USDC"])],
             min_quote_volume=float(hot_raw.get("min_quote_volume", 100_000.0)),
+            profile_min_quote_volume=float(hot_raw.get("profile_min_quote_volume", hot_raw.get("min_quote_volume", 100_000.0))),
             min_last_price=float(hot_raw.get("min_last_price", 0.000001)),
             min_volatility_pct=float(hot_raw.get("min_volatility_pct", 2.0)),
             max_volatility_pct=float(hot_raw.get("max_volatility_pct", 80.0)),
@@ -342,10 +344,14 @@ class GridWatchService:
             results.append(
                 {
                     "symbol": setup.symbol,
+                    "preset_name": setup.preset_name,
                     "ready": ready,
                     "active": False,
                     "cooldown": cooldown,
                     "reason": "READY" if ready else "; ".join(reasons),
+                    "historical_win_rate_pct": setup.historical_win_rate_pct,
+                    "historical_monthly_pct": setup.historical_monthly_pct,
+                    "experimental": "experimental" in setup.preset_name.lower(),
                     **status,
                 }
             )
@@ -437,12 +443,16 @@ class GridWatchService:
             records.append(
                 {
                     "symbol": row.get("symbol", ""),
+                    "preset_name": row.get("preset_name", ""),
                     "score": int(_to_float(row.get("score"))),
                     "ready": bool(row.get("ready")),
                     "active": str(row.get("symbol", "")) in active_symbols,
                     "cooldown": bool(row.get("cooldown")),
                     "current_price": _to_float(row.get("current_price")),
                     "reason": row.get("reason", ""),
+                    "historical_win_rate_pct": _to_float(row.get("historical_win_rate_pct")),
+                    "historical_monthly_pct": _to_float(row.get("historical_monthly_pct")),
+                    "experimental": bool(row.get("experimental")),
                 }
             )
         records.sort(key=lambda row: (not row["ready"], -row["score"], row["symbol"]))
@@ -507,7 +517,12 @@ class GridWatchService:
 
             if last_price < self.config.hot_discovery.min_last_price:
                 continue
-            if quote_volume < self.config.hot_discovery.min_quote_volume:
+            min_quote_volume = (
+                self.config.hot_discovery.profile_min_quote_volume
+                if profile is not None
+                else self.config.hot_discovery.min_quote_volume
+            )
+            if quote_volume < min_quote_volume:
                 continue
             if volatility_pct < self.config.hot_discovery.min_volatility_pct:
                 continue
