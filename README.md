@@ -138,7 +138,7 @@ Paper tracking uses the same alerts the bot sends:
 - `GRID BOT ENTRY` opens a GRID paper trade.
 - GRID take profit or stop loss closes the GRID paper trade silently for stats.
 
-Open `http://127.0.0.1:3000/loop` while the bot is running to see hot-scanned LOOP pairs, hot score, price, 24h volatility, 24h move, quote volume, active LOOP alerts, closed LOOP paper trades, LOOP wins/losses, win rate, estimated net return after the fee assumption, average net per trade, average hold time, and best/worst symbols. Open `http://127.0.0.1:3000/grid` for GRID scanned setups, readiness scores, active GRID paper trades, closed GRID paper trades, GRID win rate, and GRID net return.
+Open `http://127.0.0.1:3000/loop` while the bot is running to see LOOP entry readiness scores, status, reason, active LOOP alerts, closed LOOP paper trades, LOOP wins/losses, win rate, estimated net return after the fee assumption, average net per trade, average hold time, and best/worst symbols. Open `http://127.0.0.1:3000/grid` for GRID scanned setups, readiness scores, active GRID paper trades, closed GRID paper trades, GRID win rate, and GRID net return.
 
 ## Hetzner Auto Deploy
 

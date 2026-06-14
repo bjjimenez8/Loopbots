@@ -78,6 +78,7 @@ class LoopbotsApp:
         self.status_state_path.parent.mkdir(parents=True, exist_ok=True)
         self.fallback_pairs = list(config["pairs"])
         self.pairs = list(self.fallback_pairs)
+        self.loop_scan_rows: list[dict[str, Any]] = []
         morning_config = config.get("morning_brief", {})
         self.morning_brief = MorningBriefService(
             exchange=self.market_data.exchange,
@@ -119,6 +120,7 @@ class LoopbotsApp:
             loop_details_provider=lambda: {
                 "pairs": list(self.pairs),
                 "scanned": self.market_data.discovery_snapshot(),
+                "entry_rows": self._sorted_loop_scan_rows(),
             },
         )
 
@@ -131,6 +133,7 @@ class LoopbotsApp:
         loop_entry_count = 0
         loop_exit_count = 0
         loop_diagnostics: list[dict[str, Any]] = []
+        self.loop_scan_rows = []
         for symbol in self.pairs:
             try:
                 candles = self.market_data.fetch_ohlcv(symbol)
@@ -163,7 +166,9 @@ class LoopbotsApp:
                         loop_exit_count += 1
                     continue
 
-                loop_diagnostics.extend(self._loop_diagnostics(symbol, candles))
+                symbol_diagnostics = self._loop_diagnostics(symbol, candles)
+                loop_diagnostics.extend(symbol_diagnostics)
+                self.loop_scan_rows.append(self._loop_scan_row(symbol, symbol_diagnostics))
                 entry_signal = self._analyze_entry(symbol, candles)
                 if entry_signal.signal_type == "ENTER":
                     opened_trade = self.trade_manager.open_trade(entry_signal)
@@ -348,6 +353,38 @@ class LoopbotsApp:
         if entry_candidates:
             return max(entry_candidates, key=self._entry_score)
         return Signal("HOLD", symbol=symbol, price=float(candles["close"].iloc[-1]), reason="no entry setup")
+
+    @staticmethod
+    def _loop_scan_row(symbol: str, diagnostics: list[dict[str, Any]]) -> dict[str, Any]:
+        if not diagnostics:
+            return {
+                "symbol": symbol,
+                "entry_score": 0,
+                "status": "Waiting",
+                "mode": "",
+                "price": 0.0,
+                "reason": "not checked",
+            }
+        best = max(diagnostics, key=lambda row: row.get("score", 0))
+        entry_score = max(0, min(100, round((float(best.get("score", 0)) / 80) * 100)))
+        return {
+            "symbol": symbol,
+            "entry_score": entry_score,
+            "status": "Ready" if best.get("reason") == "READY" else "Waiting",
+            "mode": best.get("mode", ""),
+            "price": float(best.get("price") or 0.0),
+            "reason": best.get("reason", ""),
+        }
+
+    def _sorted_loop_scan_rows(self) -> list[dict[str, Any]]:
+        return sorted(
+            self.loop_scan_rows,
+            key=lambda row: (
+                row.get("status") != "Ready",
+                -int(row.get("entry_score", 0)),
+                row.get("symbol", ""),
+            ),
+        )
 
     def _loop_diagnostics(self, symbol: str, candles: Any) -> list[dict[str, Any]]:
         results = []

@@ -435,6 +435,40 @@ strategy_modes:
       method_name: Trend pullback
       order_distance_pct: 2.0
       order_count: 10
+  - name: auto_hot_loop
+    market_type: any
+    excluded_base_assets:
+      - DOGE
+      - SOL
+      - ETH
+      - LTC
+      - ALGO
+      - USDT
+      - USDC
+      - DAI
+      - PYUSD
+      - EUR
+      - USD
+      - GBP
+      - AUD
+      - CAD
+      - JPY
+      - USDG
+      - USDE
+      - XAUT
+      - FIDD
+      - RLUSD
+    strategy_overrides:
+      pullback_lookback: 6
+      pullback_max_pct: 0.035
+      bounce_confirmation_pct: 0.0015
+      min_volume_ratio: 0.85
+      max_active_minutes: 180
+    loop_settings:
+      preset_name: Auto Hot LOOP
+      method_name: Trend pullback
+      order_distance_pct: 1.5
+      order_count: 10
 loop_settings:
   preset_name: Mid-term
   order_distance_pct: 1.5
