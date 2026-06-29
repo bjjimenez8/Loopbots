@@ -345,12 +345,21 @@ class GridWatchService:
                 {
                     "symbol": setup.symbol,
                     "preset_name": setup.preset_name,
+                    "lower_pct": setup.lower_pct,
+                    "upper_pct": setup.upper_pct,
+                    "levels": setup.levels,
+                    "grid_step_pct": _setup_grid_step_pct(setup.lower_pct, setup.upper_pct, setup.levels),
+                    "take_profit_pct": setup.take_profit_pct,
+                    "stop_loss_pct": setup.stop_loss_pct,
+                    "launch_filter": setup.launch_filter,
                     "ready": ready,
                     "active": False,
                     "cooldown": cooldown,
                     "reason": "READY" if ready else "; ".join(reasons),
                     "historical_win_rate_pct": setup.historical_win_rate_pct,
+                    "historical_avg_return_pct": setup.historical_avg_return_pct,
                     "historical_monthly_pct": setup.historical_monthly_pct,
+                    "historical_worst_drawdown_pct": setup.historical_worst_drawdown_pct,
                     "experimental": "experimental" in setup.preset_name.lower(),
                     **status,
                 }
@@ -450,8 +459,21 @@ class GridWatchService:
                     "cooldown": bool(row.get("cooldown")),
                     "current_price": _to_float(row.get("current_price")),
                     "reason": row.get("reason", ""),
+                    "lower_pct": _to_float(row.get("lower_pct")),
+                    "upper_pct": _to_float(row.get("upper_pct")),
+                    "levels": int(_to_float(row.get("levels"))),
+                    "grid_step_pct": _to_float(row.get("grid_step_pct")),
+                    "take_profit_pct": _to_float(row.get("take_profit_pct")),
+                    "stop_loss_pct": _to_float(row.get("stop_loss_pct")),
+                    "launch_filter": row.get("launch_filter", ""),
+                    "trend_return_pct": _to_float(row.get("trend_return_pct")),
+                    "range_pct": _to_float(row.get("range_pct")),
+                    "directional_efficiency": _to_float(row.get("directional_efficiency")),
+                    "range_position": _to_float(row.get("range_position")),
                     "historical_win_rate_pct": _to_float(row.get("historical_win_rate_pct")),
+                    "historical_avg_return_pct": _to_float(row.get("historical_avg_return_pct")),
                     "historical_monthly_pct": _to_float(row.get("historical_monthly_pct")),
+                    "historical_worst_drawdown_pct": _to_float(row.get("historical_worst_drawdown_pct")),
                     "experimental": bool(row.get("experimental")),
                 }
             )
@@ -484,10 +506,6 @@ class GridWatchService:
         return unique
 
     def _discover_hot_setups(self) -> list[GridSetup]:
-        profiles_by_base = {profile.base_asset: profile for profile in self.config.hot_discovery.profiles}
-        if not profiles_by_base:
-            return []
-
         try:
             tickers = self.exchange.fetch_tickers()
         except Exception:
@@ -503,10 +521,6 @@ class GridWatchService:
                 continue
 
             base = str(market.get("base", "")).upper()
-            profile = profiles_by_base.get(base)
-            if profile is not None and quote not in profile.allowed_quotes:
-                continue
-
             ticker = tickers.get(symbol) or {}
             last_price = _number(ticker.get("last"), ticker.get("close"), 0.0)
             high_price = _number(ticker.get("high"), last_price, 0.0)
@@ -517,11 +531,7 @@ class GridWatchService:
 
             if last_price < self.config.hot_discovery.min_last_price:
                 continue
-            min_quote_volume = (
-                self.config.hot_discovery.profile_min_quote_volume
-                if profile is not None
-                else self.config.hot_discovery.min_quote_volume
-            )
+            min_quote_volume = self.config.hot_discovery.min_quote_volume
             if quote_volume < min_quote_volume:
                 continue
             if volatility_pct < self.config.hot_discovery.min_volatility_pct:
@@ -531,7 +541,7 @@ class GridWatchService:
             if change_pct > self.config.hot_discovery.max_abs_change_pct:
                 continue
 
-            setup = self._profile_setup(symbol, profile) if profile is not None else self._auto_setup(
+            setup = self._auto_setup(
                 symbol=symbol,
                 base=base,
                 quote_volume=quote_volume,
@@ -594,12 +604,25 @@ class GridWatchService:
         if change_pct > hot.auto_max_abs_change_pct:
             return None
 
+        lower_pct = _clamp(volatility_pct * 0.35, 5.0, 12.0)
+        upper_pct = _clamp(volatility_pct * 1.25, 18.0, 50.0)
+        target_step_pct = _clamp(volatility_pct / 3.0, 3.0, 7.0)
+        levels = int(_clamp(round((lower_pct + upper_pct) / target_step_pct), 5, 100))
+        score = _grid_hot_score(
+            quote_volume=quote_volume,
+            volatility_pct=volatility_pct,
+            change_pct=change_pct,
+            min_quote_volume=hot.auto_min_quote_volume,
+            min_volatility_pct=hot.auto_min_volatility_pct,
+            max_volatility_pct=hot.auto_max_volatility_pct,
+            max_abs_change_pct=hot.auto_max_abs_change_pct,
+        )
         return GridSetup(
             symbol=symbol,
             preset_name=hot.auto_preset_name,
-            lower_pct=hot.auto_lower_pct,
-            upper_pct=hot.auto_upper_pct,
-            levels=hot.auto_levels,
+            lower_pct=round(lower_pct, 2),
+            upper_pct=round(upper_pct, 2),
+            levels=levels,
             take_profit_pct=hot.auto_take_profit_pct,
             stop_loss_pct=hot.auto_stop_loss_pct,
             historical_win_rate_pct=0.0,
@@ -608,7 +631,7 @@ class GridWatchService:
             historical_avg_drawdown_pct=0.0,
             historical_worst_drawdown_pct=0.0,
             historical_alerts_per_month=0.0,
-            score=hot.auto_score,
+            score=score,
             launch_filter=hot.auto_launch_filter,
         )
 
@@ -922,6 +945,16 @@ def _fmt_grid_step(value: float) -> str:
     return f"{rounded_one_decimal:.1f}"
 
 
+def _setup_grid_step_pct(lower_pct: float, upper_pct: float, levels: int) -> float:
+    if levels <= 0:
+        return 0.0
+    low_ratio = 1 - (lower_pct / 100)
+    high_ratio = 1 + (upper_pct / 100)
+    if low_ratio <= 0 or high_ratio <= low_ratio:
+        return 0.0
+    return round(((high_ratio / low_ratio) ** (1 / levels) - 1) * 100, 2)
+
+
 def _fmt_price(value: float) -> str:
     if value >= 100:
         return f"{value:.2f}"
@@ -1020,6 +1053,27 @@ def _range_score(value: float, minimum: float, maximum: float) -> float:
         distance = value - maximum
     width = max(maximum - minimum, 0.000001)
     return max(0.0, 0.6 - (distance / width))
+
+
+def _grid_hot_score(
+    quote_volume: float,
+    volatility_pct: float,
+    change_pct: float,
+    min_quote_volume: float,
+    min_volatility_pct: float,
+    max_volatility_pct: float,
+    max_abs_change_pct: float,
+) -> int:
+    volume_score = min(30.0, (quote_volume / max(min_quote_volume, 1.0)) * 10.0)
+    volatility_midpoint = (min_volatility_pct + max_volatility_pct) / 2
+    volatility_width = max(max_volatility_pct - min_volatility_pct, 0.01)
+    volatility_score = max(0.0, 40.0 - (abs(volatility_pct - volatility_midpoint) / volatility_width) * 45.0)
+    move_score = max(0.0, 30.0 - (change_pct / max(max_abs_change_pct, 1.0)) * 30.0)
+    return int(round(max(0.0, min(100.0, volume_score + volatility_score + move_score))))
+
+
+def _clamp(value: float, minimum: float, maximum: float) -> float:
+    return max(minimum, min(maximum, value))
 
 
 def _is_plain_symbol(text: str) -> bool:

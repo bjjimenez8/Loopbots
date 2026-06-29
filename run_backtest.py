@@ -378,11 +378,15 @@ def run_backtest(
     max_pairs: int | None = None,
     loop_distances: list[float] | None = None,
     timeframe: str | None = None,
+    order_count: int | None = None,
+    symbols: list[str] | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     config = apply_preset(load_public_config(), preset)
     config["exchange"]["id"] = exchange_id
     if timeframe:
         config["exchange"]["timeframe"] = timeframe
+    if symbols:
+        config["pairs"] = symbols
     if all_usdt_pairs:
         config["pairs"] = discover_backtest_pairs(exchange_id, config, max_pairs=max_pairs)
 
@@ -391,7 +395,7 @@ def run_backtest(
     history_exchange = (
         _exchange(history_exchange_name, config["exchange"]["enable_rate_limit"]) if validate_markets else None
     )
-    strategies = _build_strategy_modes(config, preset, loop_distances=loop_distances)
+    strategies = _build_strategy_modes(config, preset, loop_distances=loop_distances, order_count=order_count)
     fixed_trade_size = float(trade_size if trade_size is not None else config["loop_settings"]["quote_amount_usdt"])
     mode_results = {
         mode["name"]: {
@@ -622,9 +626,10 @@ def _build_strategy_modes(
     config: dict[str, Any],
     preset: str,
     loop_distances: list[float] | None = None,
+    order_count: int | None = None,
 ) -> list[tuple[dict[str, Any], LoopStrategy]]:
     if loop_distances:
-        order_count = int(config.get("optimizer", {}).get("order_count", config["loop_settings"].get("order_count", 10)))
+        resolved_order_count = int(order_count or config.get("optimizer", {}).get("order_count", config["loop_settings"].get("order_count", 10)))
         modes = [
             {
                 "name": f"loop_{str(distance).replace('.', '_')}",
@@ -633,7 +638,7 @@ def _build_strategy_modes(
                 "loop_settings": {
                     "preset_name": f"LOOP {distance}%",
                     "order_distance_pct": distance,
-                    "order_count": order_count,
+                    "order_count": resolved_order_count,
                 },
             }
             for distance in loop_distances
@@ -1051,6 +1056,8 @@ def run_loop_optimizer(
     max_pairs: int | None,
     loop_distances: list[float],
     timeframe: str | None = None,
+    order_count: int | None = None,
+    symbols: list[str] | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     best_by_symbol: dict[str, dict[str, Any]] = {}
     distance_summaries: list[dict[str, Any]] = []
@@ -1070,6 +1077,8 @@ def run_loop_optimizer(
             max_pairs=max_pairs,
             loop_distances=[distance],
             timeframe=timeframe,
+            order_count=order_count,
+            symbols=symbols,
         )
         distance_summaries.append(
             {
@@ -1125,6 +1134,7 @@ def run_loop_optimizer(
         "starting_balance": starting_balance,
         "trade_size": float(trade_size or config["loop_settings"]["quote_amount_usdt"]),
         "distances_tested": loop_distances,
+        "order_count": int(order_count or config.get("optimizer", {}).get("order_count", config["loop_settings"].get("order_count", 10))),
         "distance_summaries": distance_summaries,
         "allocation": allocation,
     }, best_rows
@@ -1247,8 +1257,10 @@ def main() -> None:
     parser.add_argument("--cache-dir", default="data/backtests", help="Folder for cached public candle data.")
     parser.add_argument("--starting-balance", type=float, default=10000.0, help="Starting cash balance for portfolio simulation.")
     parser.add_argument("--trade-size", type=float, default=None, help="Fixed dollar size per trade. Defaults to loop quote amount.")
+    parser.add_argument("--symbols", default="", help="Comma-separated symbols to test, such as DOGE/USDT,SOL/USDT.")
     parser.add_argument("--all-usdt-pairs", action="store_true", help="Discover and test liquid spot USDT pairs from the live exchange.")
     parser.add_argument("--max-pairs", type=int, default=None, help="Maximum discovered USDT pairs to test.")
+    parser.add_argument("--order-count", type=int, default=None, help="Override LOOP order count. Bitsgap-style valid range is 10-40 even numbers.")
     parser.add_argument(
         "--loop-distances",
         default=None,
@@ -1266,6 +1278,7 @@ def main() -> None:
     )
     args = parser.parse_args()
     loop_distances = _parse_float_list(args.loop_distances) if args.loop_distances else None
+    symbols = [symbol.strip().upper() for symbol in args.symbols.split(",") if symbol.strip()]
 
     if args.optimize_loop_presets:
         config = load_public_config()
@@ -1286,6 +1299,8 @@ def main() -> None:
             max_pairs=args.max_pairs,
             loop_distances=optimizer_distances,
             timeframe=args.timeframe,
+            order_count=args.order_count,
+            symbols=symbols or None,
         )
         print("OPTIMIZER_SUMMARY")
         for key, value in summary.items():
@@ -1328,6 +1343,8 @@ def main() -> None:
         max_pairs=args.max_pairs,
         loop_distances=loop_distances,
         timeframe=args.timeframe,
+        order_count=args.order_count,
+        symbols=symbols or None,
     )
     print("SUMMARY")
     for key, value in summary.items():

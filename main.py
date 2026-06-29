@@ -15,11 +15,15 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
+from active_setups import ActiveSetupConfig, ActiveSetupStore
+from backtest_lab import run_interactive_backtest
 from dashboard import DashboardConfig, PaperDashboardServer
 from grid_watch import GridWatchService
 from market_regime import mode_allowed
 from market_data import MarketDataClient, MarketDataConfig
 from news_brief import MorningBriefConfig, MorningBriefService
+from opportunity import opportunity_snapshot
+from opportunity_paper import OpportunityPaperConfig, OpportunityPaperTracker
 from paper_tracker import PaperTracker, PaperTrackingConfig
 from strategy import LoopStrategy, Signal
 from telegram_alerts import TelegramAlertClient
@@ -50,6 +54,7 @@ def setup_logging(log_file: str) -> None:
 
 class LoopbotsApp:
     def __init__(self, config: dict[str, Any]) -> None:
+        self.config = config
         exchange_config = config["exchange"]
         self.discovery_config = config.get("pair_discovery", {})
         self.market_data = MarketDataClient(
@@ -72,6 +77,7 @@ class LoopbotsApp:
             bot_token=config["telegram"]["bot_token"],
             chat_id=config["telegram"]["chat_id"],
         )
+        self.telegram_enabled = False
         self.grid_watch = GridWatchService.from_config(config.get("grid_watch", {}), PROJECT_ROOT)
         self.status_config = config.get("status_report", {})
         self.status_state_path = PROJECT_ROOT / self.status_config.get("state_file", "data/status_report_state.json")
@@ -79,6 +85,8 @@ class LoopbotsApp:
         self.fallback_pairs = list(config["pairs"])
         self.pairs = list(self.fallback_pairs)
         self.loop_scan_rows: list[dict[str, Any]] = []
+        self.grid_scan_rows: list[dict[str, Any]] = []
+        self.opportunity_market_cache: dict[str, dict[str, Any]] = {}
         morning_config = config.get("morning_brief", {})
         self.morning_brief = MorningBriefService(
             exchange=self.market_data.exchange,
@@ -107,6 +115,20 @@ class LoopbotsApp:
                 fee_pct=float(config.get("loop_settings", {}).get("assumed_round_trip_fee_pct", 0.2)),
             ),
         )
+        active_setup_config = config.get("active_setups", {})
+        self.active_setups = ActiveSetupStore(
+            ActiveSetupConfig(
+                state_file=str(PROJECT_ROOT / active_setup_config.get("state_file", "data/active_setups.json")),
+            )
+        )
+        opportunity_paper_config = config.get("opportunity_paper", {})
+        self.opportunity_paper = OpportunityPaperTracker(
+            OpportunityPaperConfig(
+                state_file=str(PROJECT_ROOT / opportunity_paper_config.get("state_file", "data/opportunity_paper_trades.json")),
+                investment_usd=float(opportunity_paper_config.get("investment_usd", 1000.0)),
+                fee_pct=float(opportunity_paper_config.get("fee_pct", 0.40)),
+            )
+        )
         dashboard_config = config.get("dashboard", {})
         self.dashboard = PaperDashboardServer(
             tracker=self.paper_tracker,
@@ -116,12 +138,19 @@ class LoopbotsApp:
                 port=int(dashboard_config.get("port", 3000)),
                 refresh_seconds=int(dashboard_config.get("refresh_seconds", 30)),
             ),
-            grid_snapshot_provider=lambda: self.grid_watch.paper_snapshot(include_diagnostics=True),
+            grid_snapshot_provider=self._grid_snapshot_for_dashboard,
             loop_details_provider=lambda: {
                 "pairs": list(self.pairs),
                 "scanned": self.market_data.discovery_snapshot(),
                 "entry_rows": self._sorted_loop_scan_rows(),
             },
+            research_provider=self._research_snapshot,
+            opportunity_provider=self._opportunity_snapshot,
+            backtest_provider=lambda query: run_interactive_backtest(query, PROJECT_ROOT),
+            active_setup_provider=self._active_setups_snapshot,
+            opportunity_paper_provider=self._opportunity_paper_display_snapshot,
+            use_setup_handler=self._use_setup_from_form,
+            finish_setup_handler=self._finish_setup_from_form,
         )
 
     def start_dashboard(self) -> None:
@@ -137,6 +166,7 @@ class LoopbotsApp:
         for symbol in self.pairs:
             try:
                 candles = self.market_data.fetch_ohlcv(symbol)
+                self._cache_opportunity_market_snapshot(symbol, candles, self.market_data.timeframe)
                 active_trade = self.trade_manager.get_active_trade(symbol)
 
                 if active_trade:
@@ -162,7 +192,8 @@ class LoopbotsApp:
                     exit_signal = self.strategies[0]["strategy"].analyze_exit(symbol, candles, active_trade)
                     if exit_signal.signal_type == "EXIT":
                         self.trade_manager.close_trade(exit_signal, exit_signal.reason)
-                        await self.telegram.send_exit_alert(exit_signal)
+                        if self.telegram_enabled:
+                            await self.telegram.send_exit_alert(exit_signal)
                         loop_exit_count += 1
                     continue
 
@@ -173,7 +204,8 @@ class LoopbotsApp:
                 if entry_signal.signal_type == "ENTER":
                     opened_trade = self.trade_manager.open_trade(entry_signal)
                     if opened_trade:
-                        await self.telegram.send_enter_alert(entry_signal)
+                        if self.telegram_enabled:
+                            await self.telegram.send_enter_alert(entry_signal)
                         loop_entry_count += 1
             except Exception:
                 logging.exception("Failed to scan %s", symbol)
@@ -181,8 +213,10 @@ class LoopbotsApp:
         logging.info("Scan complete")
         grid_counts = await self.scan_grid_watch()
         total_alerts = loop_entry_count + loop_exit_count + grid_counts["entries"]
-        if total_alerts == 0:
+        if self.telegram_enabled and total_alerts == 0:
             await self.maybe_send_no_alert_status(loop_diagnostics)
+        self._auto_track_opportunity_paper()
+        self._opportunity_paper_snapshot(refresh=True)
         self._prune_paper_history()
 
     async def scan_grid_watch(self) -> dict[str, int]:
@@ -201,14 +235,18 @@ class LoopbotsApp:
         if closed_paper:
             logging.info("Closed %d GRID paper trades", len(closed_paper))
 
-        for alert in alerts:
-            await self.telegram.send_grid_alert(alert)
+        if self.telegram_enabled:
+            for alert in alerts:
+                await self.telegram.send_grid_alert(alert)
         counts["entries"] = len(alerts)
         if alerts:
             logging.info("Sent %d GRID watch alerts", len(alerts))
+        self._refresh_grid_scan_rows()
         return counts
 
     async def maybe_send_no_alert_status(self, loop_diagnostics: list[dict[str, Any]]) -> None:
+        if not self.telegram_enabled:
+            return
         if not self.status_config.get("enabled", True):
             return
         hour = int(self.status_config.get("hour", 20))
@@ -317,6 +355,8 @@ class LoopbotsApp:
         return merged_pairs
 
     async def send_morning_brief(self) -> None:
+        if not self.telegram_enabled:
+            return
         if not self.morning_brief.config.enabled:
             return
 
@@ -366,14 +406,25 @@ class LoopbotsApp:
                 "reason": "not checked",
             }
         best = max(diagnostics, key=lambda row: row.get("score", 0))
+        ready = best.get("reason") == "READY"
         entry_score = max(0, min(100, round((float(best.get("score", 0)) / 80) * 100)))
+        if ready:
+            entry_score = 100
+        else:
+            entry_score = min(entry_score, 99)
         return {
             "symbol": symbol,
             "entry_score": entry_score,
-            "status": "Ready" if best.get("reason") == "READY" else "Waiting",
+            "status": "Ready" if ready else "Waiting",
             "mode": best.get("mode", ""),
             "price": float(best.get("price") or 0.0),
             "reason": best.get("reason", ""),
+            "order_distance_pct": best.get("order_distance_pct", ""),
+            "order_count": best.get("order_count", ""),
+            "entry_zone_low": best.get("entry_zone_low", ""),
+            "entry_zone_high": best.get("entry_zone_high", ""),
+            "take_profit_price": best.get("take_profit_price", ""),
+            "safety_exit_price": best.get("safety_exit_price", ""),
         }
 
     def _sorted_loop_scan_rows(self) -> list[dict[str, Any]]:
@@ -386,10 +437,316 @@ class LoopbotsApp:
             ),
         )
 
+    def _grid_snapshot_for_dashboard(self) -> dict[str, Any]:
+        if self.grid_watch.config.enabled and not self.grid_scan_rows:
+            self._refresh_grid_scan_rows()
+        snapshot = self.grid_watch.paper_snapshot(include_diagnostics=False)
+        snapshot["scanned"] = list(self.grid_scan_rows)
+        return snapshot
+
+    def _refresh_grid_scan_rows(self) -> None:
+        try:
+            self.grid_scan_rows = self.grid_watch.paper_snapshot(include_diagnostics=True).get("scanned", [])
+        except Exception:
+            logging.exception("Failed to refresh cached GRID scan rows")
+
+    def _research_snapshot(self) -> dict[str, Any]:
+        grid_stats = self._grid_snapshot_for_dashboard()
+        loop_rows = [self._with_loop_setup(row) for row in self._sorted_loop_scan_rows()]
+        grid_rows = grid_stats.get("scanned", [])
+        return {
+            "generated_at": datetime.now(UTC).isoformat(),
+            "scan_interval_minutes": int(self.config.get("scheduler", {}).get("interval_minutes", 15)),
+            "loop": {
+                "timeframe": self.config.get("exchange", {}).get("timeframe", ""),
+                "quote_asset": self.discovery_config.get("quote_asset", "USDT"),
+                "scanned_count": len(loop_rows),
+                "ready_count": sum(1 for row in loop_rows if row.get("status") == "Ready"),
+                "top_live": loop_rows[:8],
+                "proof": self._loop_research_proof(),
+                "paper": self.paper_tracker.snapshot()["window_stats"],
+            },
+            "grid": {
+                "timeframe": self.grid_watch.config.timeframe,
+                "quote_assets": self.grid_watch.config.hot_discovery.quote_assets,
+                "scanned_count": len(grid_rows),
+                "ready_count": sum(1 for row in grid_rows if row.get("ready")),
+                "top_live": grid_rows[:10],
+                "proof": self._grid_research_proof(),
+                "paper": grid_stats,
+            },
+        }
+
+    def _opportunity_snapshot(self, query: dict[str, list[str]]) -> dict[str, Any]:
+        if self._query_value(query, "scan", "") == "now":
+            self._dashboard_scan_now()
+        grid_stats = self._grid_snapshot_for_dashboard()
+        loop_rows = [self._with_loop_setup(row) for row in self._sorted_loop_scan_rows()]
+        horizon_filter = self._query_value(query, "horizon", self._legacy_horizon(query))
+        strategy_filter = "both"
+        speed_filter = "all"
+        snapshot = opportunity_snapshot(
+            loop_rows=loop_rows,
+            grid_rows=grid_stats.get("scanned", []),
+            loop_proof_rows=[],
+            strategy_filter=strategy_filter,
+            status_filter=self._query_value(query, "status", "all"),
+            risk_filter="all",
+            speed_filter=speed_filter,
+        )
+        if not any(item.get("status") == "Ready Now" for item in snapshot.get("opportunities", [])):
+            snapshot = opportunity_snapshot(
+                loop_rows=loop_rows,
+                grid_rows=grid_stats.get("scanned", []),
+                loop_proof_rows=[],
+                strategy_filter=strategy_filter,
+                status_filter=self._query_value(query, "status", "all"),
+                risk_filter="all",
+                speed_filter="all",
+            )
+        snapshot.setdefault("filters", {})["horizon"] = horizon_filter
+        snapshot["filters"]["speed"] = speed_filter
+        snapshot["filters"]["risk"] = "all"
+        paper_filter = self._query_value(query, "paper", "all")
+        snapshot["filters"]["paper"] = paper_filter if paper_filter in {"all", "grid", "loop"} else "all"
+        self._attach_market_snapshots(snapshot, horizon_filter)
+        self._track_ready_opportunity_paper(snapshot)
+        return snapshot
+
+    def _dashboard_scan_now(self) -> None:
+        try:
+            self.refresh_pairs()
+            self.loop_scan_rows = []
+            for symbol in self.pairs:
+                try:
+                    candles = self.market_data.fetch_ohlcv(symbol)
+                    self._cache_opportunity_market_snapshot(symbol, candles, self.market_data.timeframe)
+                    diagnostics = self._loop_diagnostics(symbol, candles)
+                    self.loop_scan_rows.append(self._loop_scan_row(symbol, diagnostics))
+                except Exception:
+                    logging.exception("Dashboard scan failed for LOOP %s", symbol)
+            self._refresh_grid_scan_rows()
+            logging.info("Dashboard Scan Kraken Now completed")
+        except Exception:
+            logging.exception("Dashboard Scan Kraken Now failed")
+
+    def _auto_track_opportunity_paper(self) -> None:
+        considered = 0
+        for strategy in ("grid", "loop"):
+            for horizon in ("short", "mid", "long"):
+                try:
+                    snapshot = self._opportunity_snapshot({"strategy": [strategy], "horizon": [horizon]})
+                except Exception:
+                    logging.exception("Failed to auto-track %s %s opportunity paper", strategy, horizon)
+                    continue
+                considered += sum(1 for item in snapshot.get("opportunities", []) if self._is_customer_ready_opportunity(item))
+        if considered:
+            logging.info("Opportunity paper auto-tracked/confirmed %d Ready Now setups", considered)
+
+    def _track_ready_opportunity_paper(self, snapshot: dict[str, Any]) -> int:
+        count = 0
+        for item in snapshot.get("opportunities", []):
+            if not self._is_customer_ready_opportunity(item):
+                continue
+            self.opportunity_paper.add_from_opportunity(item)
+            count += 1
+        return count
+
+    @staticmethod
+    def _is_customer_ready_opportunity(item: dict[str, Any]) -> bool:
+        fields = item.get("bitsgap_fields", {})
+        if not isinstance(fields, dict):
+            return False
+        strategy = str(item.get("strategy", "")).upper()
+        if strategy == "GRID":
+            required = ["Low price", "High price", "Grid levels", "Grid step", "Take profit", "Stop loss"]
+            minimum_score = 30
+        elif strategy == "LOOP":
+            required = ["Order distance", "Order count", "Take profit", "Safety exit / stop guidance"]
+            minimum_score = 35
+        else:
+            return False
+        for key in required:
+            if fields.get(key) in {"", None, "n/a", "Needs live price"}:
+                return False
+        try:
+            score = int(float(item.get("score", 0) or 0))
+        except (TypeError, ValueError):
+            score = 0
+        return score >= minimum_score
+
+    def _attach_market_snapshots(self, snapshot: dict[str, Any], horizon: str) -> None:
+        bars = {"short": 24, "mid": 72, "long": 168}.get(horizon, 24)
+        for item in snapshot.get("opportunities", []):
+            symbol = str(item.get("pair", ""))
+            if not symbol:
+                continue
+            cached = self.opportunity_market_cache.get(symbol)
+            if cached:
+                closes = list(cached.get("closes", []))[-bars:]
+                timestamps = list(cached.get("timestamps", []))[-bars:]
+                if closes:
+                    first = float(closes[0])
+                    current = float(closes[-1])
+                    change_pct = ((current / first) - 1) * 100 if first > 0 else 0.0
+                    item["market_snapshot"] = {
+                        "current_price": current,
+                        "change_pct": round(change_pct, 2),
+                        "closes": closes[-48:],
+                        "timeframe": cached.get("timeframe", ""),
+                        "updated_at": timestamps[-1] if timestamps else cached.get("updated_at", ""),
+                    }
+                    continue
+            current = self._opportunity_current_price(item)
+            if current:
+                item["market_snapshot"] = {
+                    "current_price": current,
+                    "change_pct": 0.0,
+                    "closes": [current],
+                    "timeframe": self.grid_watch.config.timeframe if str(item.get("strategy", "")).upper() == "GRID" else self.market_data.timeframe,
+                    "updated_at": snapshot.get("generated_at", datetime.now(UTC).isoformat()),
+                }
+
+    def _cache_opportunity_market_snapshot(self, symbol: str, candles: Any, timeframe: str) -> None:
+        try:
+            window = candles.tail(min(len(candles), 168))
+            if window.empty:
+                return
+            self.opportunity_market_cache[str(symbol)] = {
+                "closes": [float(value) for value in window["close"].tolist()],
+                "timestamps": [value.isoformat() for value in window["timestamp"].tolist()],
+                "timeframe": timeframe,
+                "updated_at": window["timestamp"].iloc[-1].isoformat(),
+            }
+        except Exception:
+            logging.exception("Failed to cache market snapshot for %s", symbol)
+
+    @staticmethod
+    def _opportunity_current_price(item: dict[str, Any]) -> float | None:
+        for key in ("price", "current_price"):
+            try:
+                value = float(item.get(key, 0.0) or 0.0)
+            except (TypeError, ValueError):
+                value = 0.0
+            if value > 0:
+                return value
+        return None
+
+    def _use_setup_from_form(self, form: dict[str, list[str]]) -> None:
+        opportunity_id = self._raw_form_value(form, "opportunity_id")
+        if not opportunity_id:
+            return
+        snapshot = self._opportunity_snapshot(form)
+        for item in snapshot.get("opportunities", []):
+            if item.get("id") == opportunity_id:
+                self.active_setups.add_from_opportunity(item)
+                self.opportunity_paper.add_from_opportunity(item)
+                logging.info("Saved active manual setup %s %s", item.get("strategy"), item.get("pair"))
+                return
+        logging.warning("Opportunity id %s was not found for active setup save", opportunity_id)
+
+    def _finish_setup_from_form(self, form: dict[str, list[str]]) -> None:
+        setup_id = self._raw_form_value(form, "setup_id")
+        if setup_id and self.active_setups.finish(setup_id):
+            logging.info("Finished active manual setup %s", setup_id)
+
+    def _active_setups_snapshot(self) -> dict[str, Any]:
+        return self.active_setups.snapshot(self._active_setup_candles)
+
+    def _opportunity_paper_display_snapshot(self) -> dict[str, Any]:
+        return self._opportunity_paper_snapshot(refresh=False)
+
+    def _opportunity_paper_snapshot(self, refresh: bool = True) -> dict[str, Any]:
+        return self.opportunity_paper.snapshot(self._active_setup_candles, refresh=refresh)
+
+    def _active_setup_candles(self, setup: dict[str, Any]) -> Any:
+        symbol = str(setup.get("pair", ""))
+        if str(setup.get("strategy", "")).upper() == "GRID":
+            return self.grid_watch._fetch_candles(symbol)
+        return self.market_data.fetch_ohlcv(symbol)
+
+    @staticmethod
+    def _raw_form_value(form: dict[str, list[str]], key: str) -> str:
+        values = form.get(key)
+        if not values:
+            return ""
+        return str(values[0]).strip()
+
+    @staticmethod
+    def _query_value(query: dict[str, list[str]], key: str, default: str) -> str:
+        values = query.get(key)
+        if not values:
+            return default
+        value = str(values[0]).strip().lower()
+        return value or default
+
+    def _legacy_horizon(self, query: dict[str, list[str]]) -> str:
+        speed = self._query_value(query, "speed", "short")
+        return {"fast": "short", "medium": "mid", "slow": "long"}.get(speed, "short")
+
+    @staticmethod
+    def _horizon_to_speed(horizon: str) -> str:
+        return {"short": "fast", "mid": "medium", "long": "slow"}.get(horizon, "fast")
+
+    def _customer_strategy_filter(self, query: dict[str, list[str]]) -> str:
+        strategy = self._query_value(query, "strategy", "both")
+        return strategy if strategy in {"grid", "loop", "both"} else "both"
+
+    def _with_loop_setup(self, row: dict[str, Any]) -> dict[str, Any]:
+        setup = self._loop_setup_by_mode().get(str(row.get("mode", "")), {})
+        return {
+            **row,
+            "preset_name": setup.get("preset_name", row.get("mode", "")),
+            "method_name": setup.get("method_name", "Trend pullback"),
+            "order_distance_pct": row.get("order_distance_pct") or setup.get("order_distance_pct", ""),
+            "order_count": row.get("order_count") or setup.get("order_count", ""),
+        }
+
+    def _loop_setup_by_mode(self) -> dict[str, dict[str, Any]]:
+        rows: dict[str, dict[str, Any]] = {}
+        for mode in self.config.get("strategy_modes", []):
+            loop_settings = dict(self.config.get("loop_settings", {}))
+            loop_settings.update(mode.get("loop_settings", {}))
+            rows[str(mode.get("name", ""))] = {
+                "preset_name": loop_settings.get("preset_name", mode.get("name", "")),
+                "method_name": loop_settings.get("method_name", "Trend pullback"),
+                "order_distance_pct": loop_settings.get("order_distance_pct", ""),
+                "order_count": loop_settings.get("order_count", ""),
+            }
+        return rows
+
+    @staticmethod
+    def _loop_research_proof() -> list[dict[str, Any]]:
+        return [
+            {"symbol": "DOGE/USDT", "setup": "1.2% LOOP", "trades": 12, "win_rate_pct": 75.00, "monthly_per_1k": 26.14, "status": "Proven"},
+            {"symbol": "SOL/USDT", "setup": "2.0% LOOP", "trades": 4, "win_rate_pct": 100.00, "monthly_per_1k": 24.73, "status": "Small sample"},
+            {"symbol": "LTC/USDT", "setup": "1.0% LOOP", "trades": 9, "win_rate_pct": 77.78, "monthly_per_1k": 12.07, "status": "Proven"},
+            {"symbol": "ALGO/USDT", "setup": "2.0% LOOP", "trades": 9, "win_rate_pct": 55.56, "monthly_per_1k": 6.93, "status": "Watch"},
+            {"symbol": "ETH/USDT", "setup": "2.0% LOOP", "trades": 6, "win_rate_pct": 50.00, "monthly_per_1k": 0.50, "status": "Weak edge"},
+        ]
+
+    def _grid_research_proof(self) -> list[dict[str, Any]]:
+        rows = []
+        for profile in self.grid_watch.config.hot_discovery.profiles:
+            rows.append(
+                {
+                    "symbol": f"{profile.base_asset}/{'|'.join(profile.allowed_quotes)}",
+                    "setup": f"-{profile.lower_pct:g}% / +{profile.upper_pct:g}%, {profile.levels} levels",
+                    "win_rate_pct": profile.historical_win_rate_pct,
+                    "monthly_pct": profile.historical_monthly_pct,
+                    "worst_drawdown_pct": profile.historical_worst_drawdown_pct,
+                    "alerts_per_month": profile.historical_alerts_per_month,
+                    "status": "Experimental" if "experimental" in profile.preset_name.lower() else "Proven",
+                    "preset_name": profile.preset_name,
+                }
+            )
+        return rows
+
     def _loop_diagnostics(self, symbol: str, candles: Any) -> list[dict[str, Any]]:
         results = []
         for strategy_mode in self.strategies:
-            if not mode_allowed(strategy_mode["mode"], candles, symbol):
+            dynamic_mode = self._dynamic_scan_mode(strategy_mode["mode"])
+            if not mode_allowed(dynamic_mode, candles, symbol):
                 continue
             strategy = strategy_mode["strategy"]
             try:
@@ -397,6 +754,12 @@ class LoopbotsApp:
             except Exception:
                 logging.exception("Failed to build LOOP diagnostics for %s", symbol)
         return results
+
+    @staticmethod
+    def _dynamic_scan_mode(mode: dict[str, Any]) -> dict[str, Any]:
+        dynamic_mode = dict(mode)
+        dynamic_mode.pop("allowed_base_assets", None)
+        return dynamic_mode
 
     @staticmethod
     def _loop_strategy_diagnostic(symbol: str, candles: Any, strategy_mode: dict[str, Any], strategy: LoopStrategy) -> dict[str, Any]:
@@ -414,6 +777,7 @@ class LoopbotsApp:
         range_high = float(range_window["high"].max())
         range_span = max(range_high - range_low, 0.0)
         range_position = ((price - range_low) / range_span) if range_span else 1.0
+        range_pct = ((range_high / range_low) - 1) * 100 if range_low > 0 else 0.0
         profile = strategy._symbol_profile(symbol)
 
         trend_ok = latest["ema_fast"] > latest["ema_slow"] > latest["ema_trend"] and latest["ema_trend"] > previous["ema_trend"]
@@ -460,12 +824,33 @@ class LoopbotsApp:
             }.items()
             if not passed
         ]
+        loop_plan = loop_plan or {}
         return {
             "symbol": symbol,
             "mode": strategy_mode["mode"].get("name", ""),
             "score": score,
             "price": price,
             "reason": ", ".join(failures) if failures else "READY",
+            "raw_score": score,
+            "range_position": round(range_position, 3),
+            "volatility": round(range_pct, 2),
+            "volume_ratio": round(float(latest["volume_ratio"]), 3),
+            "trend_regime": "uptrend" if trend_ok else "not uptrend",
+            "trend_ok": trend_ok,
+            "ema_reclaim_ok": price_reclaimed_fast_ema,
+            "pullback_ok": pullback_ok,
+            "bounce_ok": bounce_ok,
+            "rsi_ok": rsi_ok,
+            "volume_ok": volume_ok,
+            "breakdown_ok": breakdown_ok,
+            "range_tp_ok": loop_ready,
+            "fee_impact_pct": "",
+            "order_distance_pct": loop_plan.get("order_distance_pct", ""),
+            "order_count": loop_plan.get("order_count", ""),
+            "entry_zone_low": loop_plan.get("low_price", ""),
+            "entry_zone_high": loop_plan.get("high_price", ""),
+            "take_profit_price": loop_plan.get("take_profit_price", ""),
+            "safety_exit_price": loop_plan.get("safety_exit_price", ""),
         }
 
     @staticmethod
@@ -550,18 +935,19 @@ async def main() -> None:
         coalesce=True,
         replace_existing=True,
     )
-    scheduler.add_job(
-        app.send_morning_brief,
-        trigger=CronTrigger(
-            hour=app.morning_brief.config.hour,
-            minute=app.morning_brief.config.minute,
-            timezone=app.morning_brief.config.timezone,
-        ),
-        id="loopbots_morning_brief",
-        max_instances=1,
-        coalesce=True,
-        replace_existing=True,
-    )
+    if app.telegram_enabled:
+        scheduler.add_job(
+            app.send_morning_brief,
+            trigger=CronTrigger(
+                hour=app.morning_brief.config.hour,
+                minute=app.morning_brief.config.minute,
+                timezone=app.morning_brief.config.timezone,
+            ),
+            id="loopbots_morning_brief",
+            max_instances=1,
+            coalesce=True,
+            replace_existing=True,
+        )
     scheduler.start()
 
     app.start_dashboard()

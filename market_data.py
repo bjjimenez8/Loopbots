@@ -87,6 +87,8 @@ class MarketDataClient:
         strategy_watchlist_bases = {
             base.upper() for base in discovery_config.get("strategy_watchlist_base_assets", [])
         }
+        if not bool(discovery_config.get("use_strategy_watchlist", False)):
+            strategy_watchlist_bases = set()
         watchlist_min_quote_volume = float(
             discovery_config.get("watchlist_min_quote_volume_usdt", min_quote_volume)
         )
@@ -147,8 +149,6 @@ class MarketDataClient:
                 quote_volume=quote_volume,
                 volatility_pct=volatility_pct,
                 change_pct=change_pct,
-                preferred=base_asset in preferred_bases,
-                watchlist=is_watchlist,
                 min_quote_volume=min_required_quote_volume,
                 ideal_min_volatility_pct=ideal_min_volatility_pct,
                 ideal_max_volatility_pct=ideal_max_volatility_pct,
@@ -171,16 +171,15 @@ class MarketDataClient:
 
         candidates.sort(
             key=lambda item: (
-                not item["watchlist"],
-                not item["preferred"],
                 -item["score"],
                 -item["volatility_pct"],
                 -item["quote_volume"],
+                item["symbol"],
             )
         )
-        limit = max(hot_max_pairs if hot_enabled else max_pairs, max_pairs)
+        limit = hot_max_pairs if hot_enabled else max_pairs
         selected_candidates = candidates[:limit]
-        selected = [item["symbol"] for item in selected_candidates[:max_pairs]]
+        selected = [item["symbol"] for item in selected_candidates]
         self._last_discovery_details = selected_candidates
         LOGGER.info("Discovered %d candidate pairs: %s", len(selected), ", ".join(selected))
         return selected
@@ -233,8 +232,6 @@ class MarketDataClient:
         quote_volume: float,
         volatility_pct: float,
         change_pct: float,
-        preferred: bool,
-        watchlist: bool,
         min_quote_volume: float,
         ideal_min_volatility_pct: float,
         ideal_max_volatility_pct: float,
@@ -255,8 +252,7 @@ class MarketDataClient:
         else:
             move_score = max(0.0, 20.0 - ((abs_change - max_abs_change_pct * 0.65) / max(max_abs_change_pct, 1.0)) * 30.0)
 
-        priority_score = (12.0 if watchlist else 0.0) + (8.0 if preferred else 0.0)
-        return int(round(max(0.0, min(100.0, volume_score + volatility_score + move_score + priority_score))))
+        return int(round(max(0.0, min(100.0, volume_score + volatility_score + move_score))))
 
     @staticmethod
     def _loop_hot_reason(volatility_pct: float, change_pct: float, watchlist: bool) -> str:
