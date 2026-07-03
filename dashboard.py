@@ -2528,9 +2528,10 @@ def _opportunity_paper_cards(opportunity_paper: dict[str, Any], filters: dict[st
     display_rows = list(open_trades) + list(reversed(closed_trades[-8:]))
     if not all_rows:
         return (
-            '<section class="panel paper-section">'
+            '<section id="paper-performance" class="panel paper-section">'
             '<div class="paper-head"><div><h2>Opportunity Paper Trades</h2>'
-            '<div class="muted">$1,000 paper tracking starts automatically when a setup is Ready Now.</div></div></div>'
+            '<div class="muted">$1,000 paper tracking starts automatically when a setup is Ready Now.</div></div>'
+            '<a class="top-link" href="/opportunities#top" aria-label="Back to top">↑</a></div>'
             '<div class="empty-card">No saved opportunity paper trades yet.</div>'
             "</section>"
     )
@@ -2551,7 +2552,7 @@ def _opportunity_paper_cards(opportunity_paper: dict[str, Any], filters: dict[st
         sections = _paper_strategy_section("GRID", grid_rows, grid_display_rows) + _paper_strategy_section("LOOP", loop_rows, loop_display_rows)
     return (
         '<section id="paper-performance" class="panel paper-section">'
-        f'<div class="paper-head"><div><h2>Paper Trading Performance</h2><div class="muted">{investment} simulated per deploy-ready setup. Fee estimate: {fee}. Separate from real Bitsgap.</div>{_paper_tabs(filters, paper_filter)}</div></div>'
+        f'<div class="paper-head"><div><h2>Paper Trading Performance</h2><div class="muted">{investment} simulated per deploy-ready setup. Fee estimate: {fee}. Separate from real Bitsgap.</div>{_paper_tabs(filters, paper_filter)}</div><a class="top-link" href="/opportunities#top" aria-label="Back to top">↑</a></div>'
         f'{sections}'
         "</section>"
     )
