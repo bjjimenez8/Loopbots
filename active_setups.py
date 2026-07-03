@@ -97,7 +97,10 @@ def _setup_from_opportunity(opportunity: dict[str, Any], now: str) -> dict[str, 
     strategy = str(opportunity.get("strategy", "")).upper()
     pair = str(opportunity.get("pair", ""))
     entry_price = _entry_price(opportunity, fields)
-    take_profit = _price(fields.get("Take profit"))
+    if strategy == "GRID":
+        take_profit = entry_price * (1 + (_percent(fields.get("Take profit")) or 0) / 100) if entry_price is not None else None
+    else:
+        take_profit = _price(fields.get("Take profit"))
     stop_price = _price(fields.get("Safety exit / stop guidance")) or _stop_from_pct(entry_price, fields.get("Stop loss"))
     if take_profit is None and entry_price is not None:
         take_profit = entry_price * (1 + (_percent(fields.get("Take profit")) or 0) / 100)

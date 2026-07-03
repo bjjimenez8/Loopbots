@@ -183,6 +183,8 @@ class PaperDashboardServer:
 
 
 def _opportunities_redirect(form: dict[str, list[str]]) -> str:
+    if _form_value(form, "setup_id", ""):
+        return "/opportunities#saved-bots"
     paper = _form_value(form, "paper", "")
     if paper in {"grid", "loop"}:
         return "/opportunities?" + urlencode({"paper": paper}) + "#paper-performance"
@@ -551,6 +553,7 @@ def _render_ready_right_now_dashboard(snapshot: dict[str, Any], payload: dict[st
     active_cards = _existing_bot_action_cards(active_setups)
     filters = payload.get("filters", {})
     paper_cards = _opportunity_paper_cards(snapshot.get("opportunity_paper", {}), filters)
+    quick_tabs = _opportunities_quick_tabs(filters)
     no_ready = ""
     if not grid_ready and not loop_ready:
         no_ready = '<div class="empty-ready">No ready coins right now. Next scan in 15 minutes.</div>'
@@ -601,20 +604,56 @@ def _render_ready_right_now_dashboard(snapshot: dict[str, Any], payload: dict[st
     h3 {{ font-size: 19px; }}
     .subtitle {{ color: var(--muted); margin-top: 8px; font-size: 16px; }}
     .top-actions {{ display: grid; gap: 8px; justify-items: end; }}
-    .scan-button {{
+    .updated {{ color: var(--muted); font-size: 13px; }}
+    .quick-tabs {{
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin: -8px 0 16px;
+    }}
+    .quick-tab {{
       display: inline-flex;
       align-items: center;
-      justify-content: center;
-      min-height: 44px;
-      padding: 0 18px;
-      border-radius: 9px;
-      border: 1px solid #067647;
-      background: #079455;
-      color: #ffffff;
+      min-height: 34px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: #ffffff;
+      color: var(--text);
+      padding: 0 13px;
       text-decoration: none;
+      font-size: 12px;
+      font-weight: 900;
+      box-shadow: 0 6px 16px rgba(15, 23, 42, 0.05);
+    }}
+    .quick-tab.active {{
+      border-color: #12b76a;
+      background: var(--green-bg);
+      color: var(--green);
+    }}
+    .section-term-tabs {{
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin: 0 0 12px;
+    }}
+    .section-term-tab {{
+      display: inline-flex;
+      align-items: center;
+      min-height: 32px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: #f8fafc;
+      color: var(--text);
+      padding: 0 12px;
+      text-decoration: none;
+      font-size: 12px;
       font-weight: 900;
     }}
-    .updated {{ color: var(--muted); font-size: 13px; }}
+    .section-term-tab.active {{
+      border-color: #12b76a;
+      background: var(--green-bg);
+      color: var(--green);
+    }}
     .section {{
       background: var(--panel);
       border: 1px solid var(--line);
@@ -635,6 +674,37 @@ def _render_ready_right_now_dashboard(snapshot: dict[str, Any], payload: dict[st
       align-items: center;
       gap: 12px;
       margin-bottom: 10px;
+    }}
+    .section-title {{
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }}
+    .section-meta {{
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }}
+    .top-link {{
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 26px;
+      height: 26px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      color: var(--text);
+      background: #ffffff;
+      text-decoration: none;
+      font-weight: 900;
+      font-size: 13px;
+      line-height: 1;
+    }}
+    .top-link:hover {{
+      border-color: #12b76a;
+      color: var(--green);
+      background: var(--green-bg);
     }}
     .count-pill {{
       border-radius: 999px;
@@ -668,7 +738,6 @@ def _render_ready_right_now_dashboard(snapshot: dict[str, Any], payload: dict[st
       margin-top: 10px;
     }}
     .deploy {{ color: var(--green); background: var(--green-bg); border: 1px solid #abefc6; }}
-    .tiny {{ color: var(--orange); background: var(--orange-bg); border: 1px solid #fedf89; }}
     .settings {{
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -684,7 +753,7 @@ def _render_ready_right_now_dashboard(snapshot: dict[str, Any], payload: dict[st
     .field .name {{ color: var(--muted); font-size: 11px; font-weight: 900; text-transform: uppercase; }}
     .field .value {{ color: var(--text); font-size: 14px; font-weight: 900; margin-top: 2px; overflow-wrap: anywhere; }}
     .buttons {{ display: grid; gap: 8px; align-content: center; }}
-    .copy-button, .save-button {{
+    .save-button, .remove-button {{
       min-height: 42px;
       border-radius: 8px;
       font-size: 12px;
@@ -692,8 +761,8 @@ def _render_ready_right_now_dashboard(snapshot: dict[str, Any], payload: dict[st
       cursor: pointer;
       font-family: inherit;
     }}
-    .copy-button {{ border: 1px solid #94a3b8; background: #ffffff; color: #0f172a; }}
     .save-button {{ border: 1px solid #067647; background: #079455; color: #ffffff; width: 100%; }}
+    .remove-button {{ border: 1px solid #fda29b; background: #fef3f2; color: #b42318; width: 100%; margin-top: 8px; }}
     .empty-ready {{
       border: 1px dashed #cbd5e1;
       border-radius: 12px;
@@ -812,6 +881,7 @@ def _render_ready_right_now_dashboard(snapshot: dict[str, Any], payload: dict[st
     @media (max-width: 900px) {{
       header {{ display: block; }}
       .top-actions {{ justify-items: start; margin-top: 14px; }}
+      .quick-tabs {{ margin-top: 0; }}
       .ready-card, .bot-card, .paper-trade {{ grid-template-columns: 1fr; }}
       .settings, .paper-detail {{ grid-template-columns: 1fr; }}
       .paper-result {{ text-align: left; }}
@@ -821,46 +891,40 @@ def _render_ready_right_now_dashboard(snapshot: dict[str, Any], payload: dict[st
   </style>
 </head>
 <body>
-  <main>
+  <main id="top">
     <header>
       <div>
         <h1>Ready Right Now</h1>
-        <div class="subtitle">Kraken-only manual Bitsgap GRID and LOOP setups. Copy the settings, deploy small, protect capital.</div>
+        <div class="subtitle">Kraken-only manual Bitsgap GRID and LOOP setups. Copy the settings and manage them manually in Bitsgap.</div>
       </div>
       <div class="top-actions">
-        <a class="scan-button" href="/opportunities?scan=now">Scan Kraken Now</a>
         <div class="updated">Updated {_escape(_short_time(generated_at))}</div>
       </div>
     </header>
+    {quick_tabs}
     {no_ready}
-    <section class="section">
-      <div class="section-head"><h2>GRID Bots Ready Now</h2><span class="count-pill">{len(grid_ready)} ready</span></div>
+    <section id="grid-ready" class="section">
+      <div class="section-head"><div class="section-title"><h2>GRID Bots Ready Now</h2></div><div class="section-meta"><span class="count-pill">{len(grid_ready)} ready</span><a class="top-link" href="/opportunities#top" aria-label="Back to top">↑</a></div></div>
+      {_section_horizon_tabs("grid-ready", filters)}
       <div class="ready-grid">{grid_cards}</div>
     </section>
-    <section class="section">
-      <div class="section-head"><h2>LOOP Bots Ready Now</h2><span class="count-pill">{len(loop_ready)} ready</span></div>
+    <section id="loop-ready" class="section">
+      <div class="section-head"><div class="section-title"><h2>LOOP Bots Ready Now</h2></div><div class="section-meta"><span class="count-pill">{len(loop_ready)} ready</span><a class="top-link" href="/opportunities#top" aria-label="Back to top">↑</a></div></div>
+      {_section_horizon_tabs("loop-ready", filters)}
       <div class="ready-grid">{loop_cards}</div>
     </section>
-    <section class="section">
-      <div class="section-head"><h2>Existing Bot Actions</h2><span class="count-pill">manual tracking</span></div>
+    {paper_cards}
+    <section id="saved-bots" class="section">
+      <div class="section-head"><div class="section-title"><h2>Existing Bot Actions</h2></div><div class="section-meta"><span class="count-pill">manual tracking</span><a class="top-link" href="/opportunities#top" aria-label="Back to top">↑</a></div></div>
       <div class="bot-actions">{active_cards}</div>
     </section>
-    {paper_cards}
     <div class="risk-note">Dashboard only. No trading API and no automatic Bitsgap actions. You manually enter and manage settings in Bitsgap.</div>
   </main>
   <script>
-    document.addEventListener("click", async (event) => {{
-      const button = event.target.closest("[data-copy]");
-      if (!button) return;
-      try {{
-        await navigator.clipboard.writeText(button.getAttribute("data-copy") || "");
-        const original = button.textContent;
-        button.textContent = "COPIED";
-        setTimeout(() => button.textContent = original, 1200);
-      }} catch (error) {{
-        button.textContent = "COPY FAILED";
-      }}
-    }});
+    if (!window.location.hash) {{
+      window.scrollTo(0, 0);
+      if ("scrollRestoration" in history) history.scrollRestoration = "manual";
+    }}
   </script>
 </body>
 </html>"""
@@ -871,10 +935,7 @@ def _ready_setup_card(row: dict[str, Any]) -> str:
     strategy = str(row.get("strategy", "")).upper()
     score = int(float(row.get("score", 0) or 0))
     action = _deploy_action(row)
-    action_class = "deploy" if action == "DEPLOY SMALL" else "tiny"
-    size = _suggested_size(action)
-    fields = _ready_settings(row, size)
-    copy_text = _copy_settings_text(pair, strategy, action, fields, row.get("reason", ""))
+    fields = _ready_settings(row)
     settings_html = "".join(_ready_field(name, value) for name, value in fields)
     return (
         '<article class="ready-card">'
@@ -882,16 +943,14 @@ def _ready_setup_card(row: dict[str, Any]) -> str:
         f'<div class="pair">{_escape(pair)}</div>'
         f'<div class="bot-type">{_escape(strategy)} Bot &bull; Kraken</div>'
         f'<div class="score">Score {score}/100</div>'
-        f'<div class="action-chip {action_class}">{_escape(action)}</div>'
+        f'<div class="action-chip deploy">{_escape(action)}</div>'
         f'<div class="reason">{_escape(_short_ready_reason(row))}</div>'
         "</div>"
         f'<div class="settings">{settings_html}</div>'
         '<div class="buttons">'
-        f'<button class="copy-button" type="button" data-copy="{_escape(copy_text)}">COPY SETTINGS</button>'
         '<form method="post" action="/api/use-setup">'
         f'<input type="hidden" name="opportunity_id" value="{_escape(row.get("id", ""))}">'
         '<input type="hidden" name="strategy" value="both">'
-        '<input type="hidden" name="horizon" value="short">'
         '<button class="save-button" type="submit">SAVE BOT</button>'
         "</form>"
         "</div>"
@@ -908,13 +967,15 @@ def _ready_field(name: str, value: Any) -> str:
     )
 
 
-def _ready_settings(row: dict[str, Any], size: str) -> list[tuple[str, Any]]:
+def _ready_settings(row: dict[str, Any]) -> list[tuple[str, Any]]:
     fields = row.get("bitsgap_fields", {})
     if not isinstance(fields, dict):
         fields = {}
     strategy = str(row.get("strategy", "")).upper()
+    term = _bitsgap_term(row)
     if strategy == "GRID":
         return [
+            ("Bitsgap preset", term),
             ("Low price", fields.get("Low price", "n/a")),
             ("High price", fields.get("High price", "n/a")),
             ("Grid levels", fields.get("Grid levels", "n/a")),
@@ -924,20 +985,29 @@ def _ready_settings(row: dict[str, Any], size: str) -> list[tuple[str, Any]]:
             ("Trailing up", "On"),
             ("Trailing down", "Off"),
             ("Pump protection", "On"),
-            ("Suggested size", size),
         ]
     entry = _entry_display(row)
     safety = fields.get("Safety exit / stop guidance", "n/a")
+    take_profit = fields.get("Take profit", "n/a")
     return [
+        ("Bitsgap preset", term),
         ("Entry price", entry),
         ("Order distance", fields.get("Order distance", "n/a")),
         ("Order count", fields.get("Order count", "n/a")),
         ("Low/high range", row.get("entry_zone", "n/a")),
-        ("Take profit", fields.get("Take profit", "n/a")),
+        ("Take profit", _loop_take_profit_text(entry, take_profit)),
         ("Safety exit", safety),
         ("Stop loss", _loop_stop_loss_text(entry, safety)),
-        ("Suggested size", size),
     ]
+
+
+def _bitsgap_term(row: dict[str, Any]) -> str:
+    speed = str(row.get("speed", "") or "").lower()
+    if speed == "fast":
+        return "Short-term"
+    if speed == "slow":
+        return "Long-term"
+    return "Mid-term"
 
 
 def _copy_settings_text(pair: str, strategy: str, action: str, fields: list[tuple[str, Any]], reason: Any) -> str:
@@ -953,11 +1023,11 @@ def _deploy_action(row: dict[str, Any]) -> str:
     score = int(float(row.get("score", 0) or 0))
     strategy = str(row.get("strategy", "")).upper()
     if score >= 70:
-        return "DEPLOY SMALL"
+        return "READY TO BE DEPLOYED"
     if strategy == "LOOP" and score >= 35:
-        return "TINY TEST"
+        return "READY TO BE DEPLOYED"
     if strategy == "GRID" and score >= 30:
-        return "TINY TEST"
+        return "READY TO BE DEPLOYED"
     return "AVOID"
 
 
@@ -977,22 +1047,46 @@ def _has_copy_ready_settings(row: dict[str, Any]) -> bool:
     return True
 
 
-def _suggested_size(action: str) -> str:
-    if action == "DEPLOY SMALL":
-        return "$250 - $500"
-    if action == "TINY TEST":
-        return "$50 - $150"
-    return "$0"
-
-
 def _short_ready_reason(row: dict[str, Any]) -> str:
     strategy = str(row.get("strategy", "")).upper()
+    score = int(float(row.get("score", 0) or 0))
+    term = _bitsgap_term(row).lower()
+    fields = row.get("bitsgap_fields", {})
+    if not isinstance(fields, dict):
+        fields = {}
     if strategy == "GRID":
-        return "Range is usable now; copy grid settings and respect TP/SL."
-    reason = str(row.get("reason", "") or "")
-    if "TP has room" in reason:
-        return "Bounce is active now and TP has room after fees."
-    return "Trend pullback is active now with copy-ready LOOP settings."
+        return _grid_ready_reason(score, term, fields)
+    return _loop_ready_reason(score, term, fields)
+
+
+def _grid_ready_reason(score: int, term: str, fields: dict[str, Any]) -> str:
+    grid_step = str(fields.get("Grid step", "") or "").strip()
+    stop_loss = str(fields.get("Stop loss", "") or "").strip()
+    take_profit = str(fields.get("Take profit", "") or "").strip()
+    if score >= 85:
+        return f"Strong {term} range. {grid_step} steps with TP and SL already mapped."
+    if score >= 70:
+        return f"Clean {term} grid range. Price has room before the TP area."
+    if "at" in stop_loss:
+        return f"Usable {term} range. Keep the mapped stop active if the range breaks."
+    if "at" in take_profit:
+        return f"Range setup is usable. TP is mapped, but keep size controlled."
+    return f"Usable {term} grid setup with copy-ready range settings."
+
+
+def _loop_ready_reason(score: int, term: str, fields: dict[str, Any]) -> str:
+    order_distance = str(fields.get("Order distance", "") or "").strip()
+    take_profit = str(fields.get("Take profit", "") or "").strip()
+    safety = str(fields.get("Safety exit / stop guidance", "") or "").strip()
+    if score >= 90:
+        return f"Strong {term} bounce. TP has room and the safety exit is defined."
+    if score >= 75:
+        return f"Good {term} pullback. {order_distance} spacing gives the LOOP room to work."
+    if "at" in take_profit:
+        return f"Usable {term} LOOP. TP is mapped; respect the safety exit."
+    if safety and safety != "n/a":
+        return f"Bounce is starting, with safety exit already mapped."
+    return f"Usable {term} LOOP setup with copy-ready entry settings."
 
 
 def _entry_display(row: dict[str, Any]) -> str:
@@ -1006,8 +1100,16 @@ def _loop_stop_loss_text(entry: Any, safety: Any) -> str:
     entry_price = _first_number(entry)
     safety_price = _first_number(safety)
     if entry_price and safety_price and entry_price > 0:
-        return f"{((entry_price - safety_price) / entry_price) * 100:.2f}%"
+        return f"{((entry_price - safety_price) / entry_price) * 100:.2f}% at {_fmt_active_price(safety_price)}"
     return "Use safety exit"
+
+
+def _loop_take_profit_text(entry: Any, take_profit: Any) -> str:
+    entry_price = _first_number(entry)
+    take_profit_price = _first_number(take_profit)
+    if entry_price and take_profit_price and entry_price > 0:
+        return f"+{((take_profit_price / entry_price) - 1) * 100:.2f}% at {_fmt_active_price(take_profit_price)}"
+    return str(take_profit or "n/a")
 
 
 def _first_number(value: Any) -> float | None:
@@ -1042,16 +1144,24 @@ def _existing_bot_action_cards(active_setups: dict[str, Any]) -> str:
 
 def _existing_bot_action_card(setup: dict[str, Any]) -> str:
     action = _saved_bot_action(setup)
-    css = {"LET RUN": "let-run", "TAKE PROFIT": "take-profit", "STOP BOT": "stop-bot"}.get(action, "let-run")
+    css = "stop-bot" if action.startswith("REMOVE ") else {"LET RUN": "let-run", "TAKE PROFIT": "take-profit"}.get(action, "let-run")
     pair = str(setup.get("pair", ""))
-    strategy = str(setup.get("strategy", ""))
+    strategy = str(setup.get("strategy", "")).upper()
     current = _fmt_active_price(setup.get("current_price"))
     profit = _signed_pct(float(setup.get("profit_pct", 0.0) or 0.0))
+    remove_label = _remove_bot_label(setup)
     return (
         '<article class="bot-card">'
         f'<div><div class="pair" style="font-size:18px;">{_escape(pair)}</div><div class="bot-type">{_escape(strategy)} saved bot</div></div>'
         f'<div class="bot-action {css}">{_escape(action)}</div>'
-        f'<div><div class="field"><div class="name">Now / PnL</div><div class="value">{_escape(current)} &bull; {profit}</div></div></div>'
+        '<div>'
+        f'<div class="field"><div class="name">Now / PnL</div><div class="value">{_escape(current)} &bull; {profit}</div></div>'
+        '<form method="post" action="/api/finish-setup">'
+        f'<input type="hidden" name="setup_id" value="{_escape(setup.get("id", ""))}">'
+        '<input type="hidden" name="strategy" value="both">'
+        f'<button class="remove-button" type="submit">{_escape(remove_label)}</button>'
+        '</form>'
+        '</div>'
         "</article>"
     )
 
@@ -1061,8 +1171,17 @@ def _saved_bot_action(setup: dict[str, Any]) -> str:
     if action == "TAKE_PROFIT":
         return "TAKE PROFIT"
     if action == "EXIT":
-        return "STOP BOT"
+        return _remove_bot_label(setup)
     return "LET RUN"
+
+
+def _remove_bot_label(setup: dict[str, Any]) -> str:
+    strategy = str(setup.get("strategy", "")).upper()
+    if strategy == "GRID":
+        return "REMOVE GRID BOT"
+    if strategy == "LOOP":
+        return "REMOVE LOOP BOT"
+    return "REMOVE BOT"
 
 
 def render_opportunities_dashboard(snapshot: dict[str, Any], refresh_seconds: int) -> str:
@@ -2447,6 +2566,49 @@ def _paper_stat(label: str, value: Any) -> str:
     )
 
 
+def _opportunities_quick_tabs(filters: dict[str, Any]) -> str:
+    selected = str(filters.get("paper", "") or "").lower()
+    selected_horizon = str(filters.get("horizon", "all") or "all").lower()
+    tabs = [
+        ("quick", "GRID Bots Ready Now", "/opportunities#grid-ready", selected == "" and selected_horizon == "all"),
+        ("quick", "LOOP Bots Ready Now", "/opportunities#loop-ready", False),
+        ("quick", "GRID Bot Paper", "/opportunities?" + urlencode({"paper": "grid"}) + "#paper-performance", selected == "grid"),
+        ("quick", "LOOP Bot Paper Trading", "/opportunities?" + urlencode({"paper": "loop"}) + "#paper-performance", selected == "loop"),
+        ("quick", "Saved Bots", "/opportunities#saved-bots", False),
+    ]
+    links = [
+        f'<a class="quick-tab {kind}{" active" if active else ""}" href="{href}">{_escape(label)}</a>'
+        for kind, label, href, active in tabs
+    ]
+    return f'<nav class="quick-tabs" aria-label="Dashboard sections">{"".join(links)}</nav>'
+
+
+def _section_horizon_tabs(anchor: str, filters: dict[str, Any]) -> str:
+    selected = str(filters.get("horizon", "all") or "all").lower()
+    tabs = [
+        ("all", "All terms"),
+        ("short", "Short-term"),
+        ("mid", "Mid-term"),
+        ("long", "Long-term"),
+    ]
+    links = []
+    for value, label in tabs:
+        active = " active" if selected == value else ""
+        query = {} if value == "all" else {"horizon": value}
+        href = "/opportunities" + (("?" + urlencode(query)) if query else "") + f"#{anchor}"
+        links.append(f'<a class="section-term-tab{active}" href="{href}">{_escape(label)}</a>')
+    return f'<nav class="section-term-tabs" aria-label="Term filter">{"".join(links)}</nav>'
+
+
+def _horizon_tabs(filters: dict[str, Any]) -> str:
+    return ""
+
+
+# Backward-compatible name for older render paths.
+def _paper_quick_tabs(filters: dict[str, Any]) -> str:
+    return _opportunities_quick_tabs(filters)
+
+
 def _paper_tabs(filters: dict[str, Any], selected: str) -> str:
     tabs = [("grid", "GRID"), ("loop", "LOOP")]
     links = []
@@ -2461,7 +2623,7 @@ def _paper_strategy_section(strategy: str, rows: list[dict[str, Any]], display_r
     if not rows:
         return (
             '<div class="paper-strategy-block">'
-            f'<div class="paper-strategy-head"><h3>{strategy} Paper</h3></div>'
+            f'<div class="paper-strategy-head"><div class="section-title"><h3>{strategy} Paper</h3></div><a class="top-link" href="/opportunities#top" aria-label="Back to top">↑</a></div>'
             f'<div class="empty-card">No {strategy} paper trades yet.</div>'
             "</div>"
         )
@@ -2496,8 +2658,9 @@ def _paper_strategy_section(strategy: str, rows: list[dict[str, Any]], display_r
     return (
         '<div class="paper-strategy-block">'
         '<div class="paper-strategy-head">'
-        f'<h3>{strategy} Paper</h3>'
+        f'<div class="section-title"><h3>{strategy} Paper</h3></div>'
         f'<div class="paper-stats">{stat_html}</div>'
+        '<a class="top-link" href="/opportunities#top" aria-label="Back to top">↑</a>'
         "</div>"
         f'<div class="paper-list">{trade_html}</div>'
         "</div>"

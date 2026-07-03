@@ -145,8 +145,12 @@ def _grid_opportunity(row: dict[str, Any]) -> Opportunity:
     current_price = float(row.get("current_price", 0.0) or 0.0)
     lower_pct = float(row.get("lower_pct", 0.0) or 0.0)
     upper_pct = float(row.get("upper_pct", 0.0) or 0.0)
+    take_profit_pct = float(row.get("take_profit_pct", 0.0) or 0.0)
+    stop_loss_pct = float(row.get("stop_loss_pct", 0.0) or 0.0)
     low_price = current_price * (1 - lower_pct / 100) if current_price > 0 else 0.0
     high_price = current_price * (1 + upper_pct / 100) if current_price > 0 else 0.0
+    take_profit_price = current_price * (1 + take_profit_pct / 100) if current_price > 0 and take_profit_pct > 0 else 0.0
+    stop_loss_price = current_price * (1 - stop_loss_pct / 100) if current_price > 0 and stop_loss_pct > 0 else 0.0
     entry_zone = _grid_entry_zone(low_price, high_price)
     win_rate = _optional_float(row.get("historical_win_rate_pct"))
     avg_return = _optional_float(row.get("historical_avg_return_pct"))
@@ -165,8 +169,8 @@ def _grid_opportunity(row: dict[str, Any]) -> Opportunity:
         "High price": _price_or_note(high_price, "Needs live price"),
         "Grid levels": _text(row.get("levels"), "n/a"),
         "Grid step": _pct_text(row.get("grid_step_pct")),
-        "Stop loss": f"On ({_pct_text(row.get('stop_loss_pct'))})",
-        "Take profit": f"On ({_pct_text(row.get('take_profit_pct'))})",
+        "Stop loss": _stop_loss_text(stop_loss_pct, stop_loss_price),
+        "Take profit": _take_profit_text(take_profit_pct, take_profit_price),
         "Trailing up/down": "Trailing Up on, Trailing Down off",
         "Profit protection": "Trail only if price keeps breaking upward. If range breaks down, respect stop loss.",
     }
@@ -341,6 +345,20 @@ def _grid_entry_zone(low_price: float, high_price: float) -> str:
     if low_price > 0 and high_price > 0:
         return f"{_format_price(low_price)} - {_format_price(high_price)}"
     return "Needs live price"
+
+
+def _stop_loss_text(stop_loss_pct: float, stop_loss_price: float) -> str:
+    pct = _pct_text(stop_loss_pct)
+    if stop_loss_price > 0:
+        return f"On (-{pct}) at {_format_price(stop_loss_price)}"
+    return f"On (-{pct})"
+
+
+def _take_profit_text(take_profit_pct: float, take_profit_price: float) -> str:
+    pct = _pct_text(take_profit_pct)
+    if take_profit_price > 0:
+        return f"On (+{pct}) at {_format_price(take_profit_price)}"
+    return f"On (+{pct})"
 
 
 def _loop_risk(score: int, proof: ProofStats) -> RiskLevel:

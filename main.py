@@ -482,9 +482,11 @@ class LoopbotsApp:
             self._dashboard_scan_now()
         grid_stats = self._grid_snapshot_for_dashboard()
         loop_rows = [self._with_loop_setup(row) for row in self._sorted_loop_scan_rows()]
-        horizon_filter = self._query_value(query, "horizon", self._legacy_horizon(query))
+        horizon_filter = self._query_value(query, "horizon", "all")
+        if horizon_filter not in {"all", "short", "mid", "long"}:
+            horizon_filter = "all"
         strategy_filter = "both"
-        speed_filter = "all"
+        speed_filter = "all" if horizon_filter == "all" else self._horizon_to_speed(horizon_filter)
         snapshot = opportunity_snapshot(
             loop_rows=loop_rows,
             grid_rows=grid_stats.get("scanned", []),
@@ -494,7 +496,7 @@ class LoopbotsApp:
             risk_filter="all",
             speed_filter=speed_filter,
         )
-        if not any(item.get("status") == "Ready Now" for item in snapshot.get("opportunities", [])):
+        if speed_filter == "all" and not any(item.get("status") == "Ready Now" for item in snapshot.get("opportunities", [])):
             snapshot = opportunity_snapshot(
                 loop_rows=loop_rows,
                 grid_rows=grid_stats.get("scanned", []),
