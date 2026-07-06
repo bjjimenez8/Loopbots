@@ -30,6 +30,8 @@ class ActiveSetupStore:
         state = self._load_state()
         existing = _existing_active_setup(state, opportunity)
         if existing is not None:
+            if _merge_opportunity_metadata(existing, opportunity):
+                self._save_state(state)
             return existing
         setup = _setup_from_opportunity(opportunity, now)
         state.append(setup)
@@ -113,6 +115,7 @@ def _setup_from_opportunity(opportunity: dict[str, Any], now: str) -> dict[str, 
         "status": "ACTIVE",
         "strategy": strategy,
         "pair": pair,
+        **_opportunity_metadata(opportunity),
         "entry_zone": str(opportunity.get("entry_zone", "")),
         "entry_price": entry_price,
         "take_profit_price": take_profit,
@@ -127,6 +130,42 @@ def _setup_from_opportunity(opportunity: dict[str, Any], now: str) -> dict[str, 
         "created_at": now,
         "updated_at": now,
     }
+
+
+def _opportunity_metadata(opportunity: dict[str, Any]) -> dict[str, Any]:
+    proof = opportunity.get("proof")
+    return {
+        "opportunity_status": str(opportunity.get("status", "")),
+        "risk": str(opportunity.get("risk", "")),
+        "speed": str(opportunity.get("speed", "")),
+        "score": _int(opportunity.get("score")),
+        "proof": proof if isinstance(proof, dict) else {},
+    }
+
+
+def _merge_opportunity_metadata(setup: dict[str, Any], opportunity: dict[str, Any]) -> bool:
+    changed = False
+    metadata = _opportunity_metadata(opportunity)
+    for key, value in metadata.items():
+        if value is None or value == "" or value == {}:
+            continue
+        if setup.get(key) != value:
+            setup[key] = value
+            changed = True
+    fields = opportunity.get("bitsgap_fields")
+    if isinstance(fields, dict) and fields and setup.get("bitsgap_fields") != fields:
+        setup["bitsgap_fields"] = fields
+        changed = True
+    if opportunity.get("id") and setup.get("opportunity_id") != opportunity.get("id"):
+        setup["opportunity_id"] = str(opportunity.get("id"))
+        changed = True
+    reason = str(opportunity.get("reason", "") or "")
+    if reason and setup.get("reason") != reason:
+        setup["reason"] = reason
+        changed = True
+    if changed:
+        setup["updated_at"] = datetime.now(UTC).isoformat()
+    return changed
 
 
 def _existing_active_setup(state: list[dict[str, Any]], opportunity: dict[str, Any]) -> dict[str, Any] | None:
@@ -276,6 +315,13 @@ def _float(value: Any) -> float | None:
         if value in {"", None}:
             return None
         return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _int(value: Any) -> int | None:
+    try:
+        return int(float(value))
     except (TypeError, ValueError):
         return None
 

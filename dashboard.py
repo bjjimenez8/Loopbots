@@ -727,6 +727,22 @@ def _render_ready_right_now_dashboard(snapshot: dict[str, Any], payload: dict[st
     .pair {{ font-size: 24px; font-weight: 900; }}
     .bot-type {{ color: var(--muted); font-size: 13px; margin-top: 3px; }}
     .score {{ font-size: 13px; font-weight: 900; margin-top: 10px; }}
+    .saved-stats {{
+      display: flex;
+      gap: 5px;
+      flex-wrap: wrap;
+      margin-top: 8px;
+    }}
+    .saved-stats span {{
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #f8fafc;
+      color: #334155;
+      padding: 3px 7px;
+      font-size: 11px;
+      font-weight: 900;
+      line-height: 1.2;
+    }}
     .reason {{ color: #334155; font-size: 13px; margin-top: 10px; }}
     .action-chip {{
       display: inline-flex;
@@ -1221,9 +1237,10 @@ def _existing_bot_action_card(setup: dict[str, Any]) -> str:
     current = _fmt_active_price(setup.get("current_price"))
     profit = _signed_pct(float(setup.get("profit_pct", 0.0) or 0.0))
     remove_label = _remove_bot_label(setup)
+    stats = _saved_setup_stats(setup)
     return (
         '<article class="bot-card">'
-        f'<div><div class="pair" style="font-size:18px;">{_escape(pair)}</div><div class="bot-type">{_escape(strategy)} saved bot</div></div>'
+        f'<div><div class="pair" style="font-size:18px;">{_escape(pair)}</div><div class="bot-type">{_escape(strategy)} saved bot</div>{stats}</div>'
         f'<div class="bot-action {css}">{_escape(action)}</div>'
         '<div>'
         f'<div class="field"><div class="name">Now / PnL</div><div class="value">{_escape(current)} &bull; {profit}</div></div>'
@@ -1678,6 +1695,22 @@ def render_opportunities_dashboard(snapshot: dict[str, Any], refresh_seconds: in
     .how-card {{ margin-top: 18px; padding: 18px; }}
     .active-section {{ margin-top: 20px; }}
     .active-section h2 {{ margin: 0 0 12px; font-size: 18px; }}
+    .saved-stats {{
+      display: flex;
+      gap: 5px;
+      flex-wrap: wrap;
+      margin-top: 8px;
+    }}
+    .saved-stats span {{
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #f8fafc;
+      color: #334155;
+      padding: 3px 7px;
+      font-size: 11px;
+      font-weight: 900;
+      line-height: 1.2;
+    }}
     .active-card {{
       display: grid;
       grid-template-columns: 190px 150px minmax(260px, 1fr) 130px;
@@ -2631,9 +2664,10 @@ def _active_setup_cards(active_setups: dict[str, Any], filters: dict[str, Any]) 
         current = _fmt_active_price(setup.get("current_price"))
         profit = _signed_pct(float(setup.get("profit_pct", 0.0) or 0.0))
         guidance = str(setup.get("guidance", "Keep running."))
+        stats = _saved_setup_stats(setup)
         cards.append(
             '<article class="active-card">'
-            f'<div><div class="pair" style="font-size:18px;">{_escape(pair)}</div><div class="subline">{_escape(strategy)} manual setup</div></div>'
+            f'<div><div class="pair" style="font-size:18px;">{_escape(pair)}</div><div class="subline">{_escape(strategy)} manual setup</div>{stats}</div>'
             f'<div><div class="detail-label">Action</div><div class="active-action">{_escape(action)}</div></div>'
             f'<div><div class="detail-label">Now / PnL</div><div class="detail-value" style="font-size:15px;">{_escape(current)} &bull; {profit}</div><div class="subline">{_escape(guidance)}</div></div>'
             '<form method="post" action="/api/finish-setup">'
@@ -3353,6 +3387,36 @@ def _proof_summary(proof: dict[str, Any]) -> str:
     label = proof.get("label") or "experimental"
     parts.append(str(label).title())
     return '<div class="fields">' + "".join(f"<div>{_escape(part)}</div>" for part in parts) + "</div>"
+
+
+def _saved_setup_stats(setup: dict[str, Any]) -> str:
+    parts: list[str] = []
+    score = setup.get("score")
+    if score not in {"", None}:
+        try:
+            parts.append(f"Score {int(float(score))}/100")
+        except (TypeError, ValueError):
+            pass
+    for label, key in [("Risk", "risk"), ("Speed", "speed")]:
+        value = str(setup.get(key, "") or "").strip()
+        if value:
+            parts.append(f"{label} {value}")
+    proof = setup.get("proof")
+    if isinstance(proof, dict):
+        if proof.get("win_rate_pct") is not None:
+            parts.append(f"WR {_pct(float(proof.get('win_rate_pct') or 0.0))}")
+        if proof.get("average_return_pct") is not None:
+            parts.append(f"Avg {_signed_pct(float(proof.get('average_return_pct') or 0.0))}")
+        if proof.get("worst_drawdown_pct") is not None:
+            parts.append(f"DD {_signed_pct(float(proof.get('worst_drawdown_pct') or 0.0))}")
+        if proof.get("historical_starts") is not None:
+            parts.append(f"Starts {int(float(proof.get('historical_starts') or 0))}")
+        label = str(proof.get("label", "") or "").strip()
+        if label:
+            parts.append(label.title())
+    if not parts:
+        return ""
+    return '<div class="saved-stats">' + "".join(f"<span>{_escape(part)}</span>" for part in parts) + "</div>"
 
 
 def _filter_options(selected: Any, options: list[tuple[str, str]]) -> str:
