@@ -816,6 +816,48 @@ def _render_ready_right_now_dashboard(snapshot: dict[str, Any], payload: dict[st
       font-weight: 900;
     }}
     .paper-tab.active {{ border-color: #12b76a; background: var(--green-bg); color: var(--green); }}
+    .paper-ledger {{
+      display: grid;
+      gap: 8px;
+      margin-top: 14px;
+    }}
+    .paper-ledger-head,
+    .paper-ledger-row {{
+      display: grid;
+      grid-template-columns: 1.1fr 0.75fr 1.25fr 0.9fr 0.85fr 0.8fr 0.85fr 0.95fr 0.95fr;
+      gap: 8px;
+      align-items: center;
+    }}
+    .paper-ledger-head {{
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 900;
+      text-transform: uppercase;
+      padding: 0 10px;
+    }}
+    .paper-ledger-row {{
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #ffffff;
+      padding: 10px;
+      font-size: 13px;
+    }}
+    .paper-ledger-row strong {{ color: var(--text); }}
+    .paper-mini-market {{
+      display: grid;
+      gap: 4px;
+      min-width: 120px;
+    }}
+    .paper-mini-market .sparkline {{
+      width: 120px;
+      height: 30px;
+      display: block;
+    }}
+    .live-badge.tiny {{
+      width: fit-content;
+      font-size: 9px;
+      padding: 2px 6px;
+    }}
     .paper-strategy-block {{
       border-top: 1px solid var(--line);
       padding-top: 14px;
@@ -883,6 +925,8 @@ def _render_ready_right_now_dashboard(snapshot: dict[str, Any], payload: dict[st
       .top-actions {{ justify-items: start; margin-top: 14px; }}
       .quick-tabs {{ margin-top: 0; }}
       .ready-card, .bot-card, .paper-trade {{ grid-template-columns: 1fr; }}
+      .paper-ledger-head {{ display: none; }}
+      .paper-ledger-row {{ grid-template-columns: 1fr 1fr; }}
       .settings, .paper-detail {{ grid-template-columns: 1fr; }}
       .paper-result {{ text-align: left; }}
       .paper-head, .paper-strategy-head {{ display: block; }}
@@ -1686,6 +1730,48 @@ def render_opportunities_dashboard(snapshot: dict[str, Any], refresh_seconds: in
       background: #ecfdf3;
       color: #067647;
     }}
+    .paper-ledger {{
+      display: grid;
+      gap: 8px;
+      margin-top: 14px;
+    }}
+    .paper-ledger-head,
+    .paper-ledger-row {{
+      display: grid;
+      grid-template-columns: 1.1fr 0.75fr 1.25fr 0.9fr 0.85fr 0.8fr 0.85fr 0.95fr 0.95fr;
+      gap: 8px;
+      align-items: center;
+    }}
+    .paper-ledger-head {{
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 900;
+      text-transform: uppercase;
+      padding: 0 10px;
+    }}
+    .paper-ledger-row {{
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #ffffff;
+      padding: 10px;
+      font-size: 13px;
+    }}
+    .paper-ledger-row strong {{ color: var(--text); }}
+    .paper-mini-market {{
+      display: grid;
+      gap: 4px;
+      min-width: 120px;
+    }}
+    .paper-mini-market .sparkline {{
+      width: 120px;
+      height: 30px;
+      display: block;
+    }}
+    .live-badge.tiny {{
+      width: fit-content;
+      font-size: 9px;
+      padding: 2px 6px;
+    }}
     .paper-split {{
       display: flex;
       gap: 8px;
@@ -1758,6 +1844,8 @@ def render_opportunities_dashboard(snapshot: dict[str, Any], refresh_seconds: in
       .opportunity-card {{ grid-template-columns: 1fr; }}
       .active-card {{ grid-template-columns: 1fr; }}
       .paper-trade {{ grid-template-columns: 1fr; }}
+      .paper-ledger-head {{ display: none; }}
+      .paper-ledger-row {{ grid-template-columns: 1fr 1fr; }}
       .paper-result {{ text-align: left; }}
       .market-panel {{ grid-template-columns: 1fr; }}
       .settings-cell {{ border-left: 0; border-top: 1px solid var(--line); padding-left: 0; padding-top: 14px; }}
@@ -2525,6 +2613,22 @@ def _opportunity_paper_cards(opportunity_paper: dict[str, Any], filters: dict[st
     open_trades = opportunity_paper.get("open", []) or []
     closed_trades = opportunity_paper.get("closed", []) or []
     all_rows = list(open_trades) + list(reversed(closed_trades))
+    investment = _money(opportunity_paper.get("investment_usd", 1000.0))
+    fee = _pct(float(opportunity_paper.get("fee_pct", 0.0) or 0.0))
+    paper_filter = str(filters.get("paper", "all") or "all").lower()
+    if paper_filter not in {"all", "grid", "loop"}:
+        paper_filter = "all"
+    rows = _paper_filter_rows(all_rows, paper_filter)
+    stats = _paper_stats_html(rows)
+    ledger = _paper_ledger_rows(rows) if rows else '<div class="empty-card">No paper trades yet. Ready Now setups will start tracking automatically.</div>'
+    return (
+        '<section id="paper-performance" class="panel paper-section">'
+        f'<div class="paper-head"><div><h2>Paper Trading Performance</h2><div class="muted">{investment} simulated per Ready Now setup. Fee estimate: {fee}. Separate from real Bitsgap.</div>{_paper_tabs(filters, paper_filter)}</div><a class="top-link" href="/opportunities#top" aria-label="Back to top">&uarr;</a></div>'
+        f'<div class="paper-stats">{stats}</div>'
+        f'{ledger}'
+        "</section>"
+    )
+    all_rows = list(open_trades) + list(reversed(closed_trades))
     display_rows = list(open_trades) + list(reversed(closed_trades[-8:]))
     if not all_rows:
         return (
@@ -2618,6 +2722,100 @@ def _paper_tabs(filters: dict[str, Any], selected: str) -> str:
         active = " active" if selected == value else ""
         links.append(f'<a class="paper-tab{active}" href="{href}">{_escape(label)}</a>')
     return f'<div class="paper-tabs">{"".join(links)}</div>'
+
+
+def _paper_filter_rows(rows: list[dict[str, Any]], selected: str) -> list[dict[str, Any]]:
+    if selected == "grid":
+        return [row for row in rows if str(row.get("strategy", "")).upper() == "GRID"]
+    if selected == "loop":
+        return [row for row in rows if str(row.get("strategy", "")).upper() == "LOOP"]
+    return rows
+
+
+def _paper_stats_html(rows: list[dict[str, Any]]) -> str:
+    open_rows = [row for row in rows if row.get("status") == "OPEN"]
+    closed_rows = [row for row in rows if row.get("status") == "CLOSED"]
+    wins = [row for row in closed_rows if float(row.get("net_return_pct", 0.0) or 0.0) > 0]
+    losses = max(len(closed_rows) - len(wins), 0)
+    trade_size = float(rows[0].get("investment_usd", 1000.0) or 1000.0) if rows else 1000.0
+    realized_pnl = sum(float(row.get("net_pnl_usd", 0.0) or 0.0) for row in closed_rows)
+    open_pnl = sum(float(row.get("unrealized_pnl_usd", 0.0) or 0.0) for row in open_rows)
+    equity_pnl = realized_pnl + open_pnl
+    closed_equity = (len(closed_rows) * trade_size) + realized_pnl
+    open_equity = (len(open_rows) * trade_size) + open_pnl
+    total_equity = closed_equity + open_equity
+    win_rate = _win_rate_text(len(wins), len(closed_rows))
+    return "".join(
+        _paper_stat(label, value)
+        for label, value in [
+            ("Open", len(open_rows)),
+            ("Closed", len(closed_rows)),
+            ("W / L", f"{len(wins)} / {losses}"),
+            ("Win Rate", win_rate),
+            ("Realized PnL", _money(realized_pnl)),
+            ("Open PnL", _money(open_pnl)),
+            ("Equity PnL", _money(equity_pnl)),
+            ("Closed Equity", _money(closed_equity)),
+            ("Open Equity", _money(open_equity)),
+            ("Total Equity", _money(total_equity)),
+        ]
+    )
+
+
+def _paper_ledger_rows(rows: list[dict[str, Any]]) -> str:
+    trade_rows = "".join(_paper_trade_row(row) for row in rows[:40])
+    return (
+        '<div class="paper-ledger" role="table" aria-label="Paper trades">'
+        '<div class="paper-ledger-head" role="row">'
+        '<div>Pair</div><div>Bot Type</div><div>Live Chart</div><div>Start Date</div><div>Entry Price</div>'
+        '<div>End Date</div><div>Exit Price</div><div>Start Balance</div><div>End Balance</div>'
+        "</div>"
+        f"{trade_rows}"
+        "</div>"
+    )
+
+
+def _paper_trade_row(row: dict[str, Any]) -> str:
+    status = str(row.get("status", "OPEN"))
+    pair = str(row.get("pair", ""))
+    strategy = str(row.get("strategy", ""))
+    is_closed = status == "CLOSED"
+    investment = float(row.get("investment_usd", 1000.0) or 1000.0)
+    pnl = float(row.get("net_pnl_usd", 0.0) or 0.0) if is_closed else float(row.get("unrealized_pnl_usd", 0.0) or 0.0)
+    end_balance = investment + pnl
+    chip_class = "grid" if strategy.upper() == "GRID" else "loop"
+    chip_text = "Grid" if strategy.upper() == "GRID" else "Loop"
+    end_date = _short_time(row.get("closed_at", "")) if is_closed else "Open"
+    exit_price = _price(row.get("exit_price")) if is_closed else "Open"
+    result_class = "good" if pnl >= 0 else "bad"
+    chart = _paper_live_chart(row)
+    return (
+        '<div class="paper-ledger-row" role="row">'
+        f'<div><strong>{_escape(pair)}</strong><span class="subline">{_escape(status.title())}</span></div>'
+        f'<div><span class="strategy-chip {chip_class}">{_escape(chip_text)}</span></div>'
+        f"{chart}"
+        f'<div>{_escape(_short_time(row.get("opened_at", "")))}</div>'
+        f'<div>{_price(row.get("entry_price"))}</div>'
+        f'<div>{_escape(end_date)}</div>'
+        f'<div>{_escape(exit_price)}</div>'
+        f'<div>{_money(investment)}</div>'
+        f'<div class="{result_class}"><strong>{_money(end_balance)}</strong><span class="subline">{_money(pnl)}</span></div>'
+        "</div>"
+    )
+
+
+def _paper_live_chart(row: dict[str, Any]) -> str:
+    closes = row.get("recent_closes") or []
+    current = row.get("current_price") or row.get("entry_price")
+    change = float(row.get("recent_change_pct", 0.0) or 0.0)
+    color = "#079455" if change >= 0 else "#d92d20"
+    return (
+        '<div class="paper-mini-market">'
+        f'<div><strong>{_price(current)}</strong> <span style="color:{color};font-weight:900;">{_escape(_signed_pct(change))}</span></div>'
+        f'{_sparkline_svg(closes, color)}'
+        '<span class="live-badge tiny">LIVE</span>'
+        "</div>"
+    )
 
 
 def _paper_strategy_section(strategy: str, rows: list[dict[str, Any]], display_rows: list[dict[str, Any]]) -> str:

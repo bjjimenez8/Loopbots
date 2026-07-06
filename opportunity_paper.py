@@ -111,6 +111,8 @@ def _trade_from_opportunity(opportunity: dict[str, Any], now: str, investment_us
         "net_return_pct": None,
         "net_pnl_usd": None,
         "current_price": entry_price,
+        "recent_closes": [],
+        "recent_change_pct": None,
         "unrealized_net_return_pct": None,
         "unrealized_pnl_usd": None,
     }
@@ -125,7 +127,11 @@ def _update_trade(trade: dict[str, Any], candles: pd.DataFrame) -> dict[str, Any
     if entry is None or entry <= 0:
         return {**trade, "last_checked_at": datetime.now(UTC).isoformat(), "paper_note": "Missing entry price."}
 
+    recent_closes = [round(float(value), 10) for value in candles["close"].tail(24).tolist()]
     current = float(candles["close"].iloc[-1])
+    recent_change = None
+    if len(recent_closes) >= 2 and recent_closes[0] > 0:
+        recent_change = round(((recent_closes[-1] / recent_closes[0]) - 1) * 100, 2)
     rows = _active_window(trade, candles)
     for _, candle in rows.iterrows():
         low = float(candle["low"])
@@ -141,13 +147,19 @@ def _update_trade(trade: dict[str, Any], candles: pd.DataFrame) -> dict[str, Any
         elif tp and high >= tp:
             event, exit_price, reason = "TAKE_PROFIT", tp, "Take profit touched."
         if event and exit_price:
-            return _close_trade(trade, exit_price, reason or event, candle_time)
+            return {
+                **_close_trade(trade, exit_price, reason or event, candle_time),
+                "recent_closes": recent_closes,
+                "recent_change_pct": recent_change,
+            }
 
     unrealized = ((current / entry) - 1) * 100 - float(trade.get("fee_pct", 0.0) or 0.0)
     investment = float(trade.get("investment_usd", 1000.0) or 1000.0)
     return {
         **trade,
         "current_price": current,
+        "recent_closes": recent_closes,
+        "recent_change_pct": recent_change,
         "unrealized_net_return_pct": round(unrealized, 2),
         "unrealized_pnl_usd": round(investment * unrealized / 100, 2),
         "last_checked_at": datetime.now(UTC).isoformat(),
