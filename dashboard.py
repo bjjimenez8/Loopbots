@@ -1078,7 +1078,6 @@ def _ready_settings(row: dict[str, Any]) -> list[tuple[str, Any]]:
         ("Entry price", entry),
         ("Order distance", fields.get("Order distance", "n/a")),
         ("Order count", fields.get("Order count", "n/a")),
-        ("Low/high range", row.get("entry_zone", "n/a")),
         ("Take profit", _loop_take_profit_text(entry, take_profit)),
         ("Stop loss", _loop_stop_loss_text(entry, stop_loss)),
     ]
@@ -2199,8 +2198,8 @@ def render_backtest_dashboard(snapshot: dict[str, Any], refresh_seconds: int) ->
     bot = str(backtest.get("bot", "grid"))
     rows = backtest.get("rows", [])
     if bot == "loop":
-        result_rows = "".join(_backtest_loop_row(row) for row in rows) or _empty_row(11, "No LOOP settings passed.")
-        result_head = "<tr><th>Coin</th><th>Timeframe</th><th>Distance</th><th>Count</th><th>Low</th><th>High</th><th>Trades</th><th>Win Rate</th><th>Est. Monthly</th><th>Net</th><th>Avg Hold</th></tr>"
+        result_rows = "".join(_backtest_loop_row(row) for row in rows) or _empty_row(9, "No LOOP settings passed.")
+        result_head = "<tr><th>Coin</th><th>Timeframe</th><th>Distance</th><th>Count</th><th>Trades</th><th>Win Rate</th><th>Est. Monthly</th><th>Net</th><th>Avg Hold</th></tr>"
     else:
         result_rows = "".join(_backtest_grid_row(row) for row in rows) or _empty_row(12, "No GRID settings passed.")
         result_head = "<tr><th>Coin</th><th>Timeframe</th><th>Low</th><th>High</th><th>Levels</th><th>Grid Step</th><th>TP / SL</th><th>Starts</th><th>Win Rate</th><th>Est. Monthly</th><th>Worst DD</th><th>Score</th></tr>"
@@ -3315,7 +3314,6 @@ def _settings_summary(row: dict[str, Any]) -> str:
         items = [
             ("Order distance", fields.get("Order distance")),
             ("Order count", fields.get("Order count")),
-            ("Entry zone", row.get("entry_zone")),
             ("TP", fields.get("Take profit")),
             ("Stop loss", _loop_stop_loss_value(fields)),
             ("Live", "Now"),
@@ -3798,8 +3796,6 @@ def _best_loop_card(row: dict[str, Any]) -> str:
         ("Exchange", "Kraken"),
         ("Pair", symbol),
         ("Timeframe", row.get("timeframe", "")),
-        ("Low Price", _price(row.get("low_price", 0.0))),
-        ("High Price", _price(row.get("high_price", 0.0))),
         ("Order Distance", _pct_trim(row.get("order_distance_pct", 0.0))),
         ("Order Count", int(float(row.get("order_count", 0) or 0))),
         ("Order Size Currency", str(symbol).split("/")[-1] if "/" in str(symbol) else "USD"),
@@ -3850,8 +3846,6 @@ def _backtest_loop_row(row: dict[str, Any]) -> str:
         f"<td>{_escape(row.get('timeframe', ''))}</td>"
         f"<td>{_pct_trim(row.get('order_distance_pct', 0.0))}</td>"
         f"<td>{int(float(row.get('order_count', 0) or 0))}</td>"
-        f"<td>{_price(row.get('low_price', 0.0))}</td>"
-        f"<td>{_price(row.get('high_price', 0.0))}</td>"
         f"<td>{int(float(row.get('trades', 0) or 0))}</td>"
         f"<td>{_pct(row.get('win_rate_pct', 0.0))}</td>"
         f"<td>{_signed_pct(row.get('monthly_return_on_trade_size_pct', 0.0))}</td>"
