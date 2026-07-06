@@ -355,7 +355,7 @@ def render_loop_dashboard(snapshot: dict[str, Any], refresh_seconds: int) -> str
       <h2>Active Alerts</h2>
       <table>
         <thead>
-          <tr><th>Coin</th><th>Preset</th><th>Entry</th><th>Take Profit</th><th>Safety Exit</th><th>Opened</th><th>Reason</th></tr>
+          <tr><th>Coin</th><th>Preset</th><th>Entry</th><th>Take Profit</th><th>Stop Loss</th><th>Opened</th><th>Reason</th></tr>
         </thead>
         <tbody>{active_rows}</tbody>
       </table>
@@ -824,7 +824,7 @@ def _render_ready_right_now_dashboard(snapshot: dict[str, Any], payload: dict[st
     .paper-ledger-head,
     .paper-ledger-row {{
       display: grid;
-      grid-template-columns: 1.1fr 0.75fr 1.25fr 0.9fr 0.85fr 0.8fr 0.85fr 0.95fr 0.95fr;
+      grid-template-columns: 1.1fr 0.75fr 1.25fr 0.9fr 0.85fr 0.8fr 0.85fr 0.9fr minmax(190px, 1.45fr);
       gap: 8px;
       align-items: center;
     }}
@@ -843,6 +843,18 @@ def _render_ready_right_now_dashboard(snapshot: dict[str, Any], payload: dict[st
       font-size: 13px;
     }}
     .paper-ledger-row strong {{ color: var(--text); }}
+    .balance-equation {{
+      display: inline-flex;
+      align-items: baseline;
+      justify-content: flex-end;
+      gap: 7px;
+      flex-wrap: wrap;
+      line-height: 1.25;
+    }}
+    .balance-equation .operator {{ color: #667085; }}
+    .balance-equation .gain {{ color: var(--green); }}
+    .balance-equation .loss {{ color: #b42318; }}
+    .balance-equation strong {{ font-size: 15px; }}
     .paper-mini-market {{
       display: grid;
       gap: 4px;
@@ -883,7 +895,7 @@ def _render_ready_right_now_dashboard(snapshot: dict[str, Any], payload: dict[st
     .paper-list {{ display: grid; gap: 10px; }}
     .paper-trade {{
       display: grid;
-      grid-template-columns: 150px minmax(260px, 1fr) 140px;
+      grid-template-columns: 150px minmax(260px, 1fr) minmax(210px, 0.7fr);
       gap: 12px;
       align-items: start;
       border: 1px solid var(--line);
@@ -903,7 +915,8 @@ def _render_ready_right_now_dashboard(snapshot: dict[str, Any], payload: dict[st
     }}
     .strategy-chip.grid {{ color: #065f46; background: #d1fae5; border: 1px solid #a7f3d0; }}
     .strategy-chip.loop {{ color: #3730a3; background: #e0e7ff; border: 1px solid #c7d2fe; }}
-    .paper-result {{ font-size: 20px; font-weight: 900; text-align: right; }}
+    .paper-result {{ font-size: 18px; font-weight: 900; text-align: right; }}
+    .paper-result .balance-equation {{ justify-content: flex-end; }}
     .paper-detail {{
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -942,7 +955,7 @@ def _render_ready_right_now_dashboard(snapshot: dict[str, Any], payload: dict[st
         <div class="subtitle">Kraken-only manual Bitsgap GRID and LOOP setups. Copy the settings and manage them manually in Bitsgap.</div>
       </div>
       <div class="top-actions">
-        <div class="updated">Updated {_escape(_short_time(generated_at))}</div>
+        <div class="updated">Updated <span data-live-clock>{_escape(_short_time(generated_at))}</span></div>
       </div>
     </header>
     {quick_tabs}
@@ -965,6 +978,17 @@ def _render_ready_right_now_dashboard(snapshot: dict[str, Any], payload: dict[st
     <div class="risk-note">Dashboard only. No trading API and no automatic Bitsgap actions. You manually enter and manage settings in Bitsgap.</div>
   </main>
   <script>
+    function updateLiveClock() {{
+      var clock = document.querySelector("[data-live-clock]");
+      if (!clock) return;
+      clock.textContent = new Date().toLocaleTimeString([], {{
+        hour: "numeric",
+        minute: "2-digit",
+        second: "2-digit"
+      }});
+    }}
+    updateLiveClock();
+    setInterval(updateLiveClock, 1000);
     if (!window.location.hash) {{
       window.scrollTo(0, 0);
       if ("scrollRestoration" in history) history.scrollRestoration = "manual";
@@ -1031,7 +1055,7 @@ def _ready_settings(row: dict[str, Any]) -> list[tuple[str, Any]]:
             ("Pump protection", "On"),
         ]
     entry = _entry_display(row)
-    safety = fields.get("Safety exit / stop guidance", "n/a")
+    stop_loss = _loop_stop_loss_value(fields)
     take_profit = fields.get("Take profit", "n/a")
     return [
         ("Bitsgap preset", term),
@@ -1040,8 +1064,7 @@ def _ready_settings(row: dict[str, Any]) -> list[tuple[str, Any]]:
         ("Order count", fields.get("Order count", "n/a")),
         ("Low/high range", row.get("entry_zone", "n/a")),
         ("Take profit", _loop_take_profit_text(entry, take_profit)),
-        ("Safety exit", safety),
-        ("Stop loss", _loop_stop_loss_text(entry, safety)),
+        ("Stop loss", _loop_stop_loss_text(entry, stop_loss)),
     ]
 
 
@@ -1083,9 +1106,9 @@ def _has_copy_ready_settings(row: dict[str, Any]) -> bool:
     if strategy == "GRID":
         required = ["Low price", "High price", "Grid levels", "Grid step", "Take profit", "Stop loss"]
     else:
-        required = ["Order distance", "Order count", "Take profit", "Safety exit / stop guidance"]
+        required = ["Order distance", "Order count", "Take profit", "Stop loss"]
     for key in required:
-        value = fields.get(key)
+        value = _loop_stop_loss_value(fields) if key == "Stop loss" else fields.get(key)
         if value in {"", None, "n/a", "Needs live price"}:
             return False
     return True
@@ -1121,15 +1144,15 @@ def _grid_ready_reason(score: int, term: str, fields: dict[str, Any]) -> str:
 def _loop_ready_reason(score: int, term: str, fields: dict[str, Any]) -> str:
     order_distance = str(fields.get("Order distance", "") or "").strip()
     take_profit = str(fields.get("Take profit", "") or "").strip()
-    safety = str(fields.get("Safety exit / stop guidance", "") or "").strip()
+    stop_loss = str(_loop_stop_loss_value(fields) or "").strip()
     if score >= 90:
-        return f"Strong {term} bounce. TP has room and the safety exit is defined."
+        return f"Strong {term} bounce. TP has room and the stop loss is defined."
     if score >= 75:
         return f"Good {term} pullback. {order_distance} spacing gives the LOOP room to work."
     if "at" in take_profit:
-        return f"Usable {term} LOOP. TP is mapped; respect the safety exit."
-    if safety and safety != "n/a":
-        return f"Bounce is starting, with safety exit already mapped."
+        return f"Usable {term} LOOP. TP is mapped; respect the stop loss."
+    if stop_loss and stop_loss != "n/a":
+        return f"Bounce is starting, with stop loss already mapped."
     return f"Usable {term} LOOP setup with copy-ready entry settings."
 
 
@@ -1145,7 +1168,11 @@ def _loop_stop_loss_text(entry: Any, safety: Any) -> str:
     safety_price = _first_number(safety)
     if entry_price and safety_price and entry_price > 0:
         return f"{((entry_price - safety_price) / entry_price) * 100:.2f}% at {_fmt_active_price(safety_price)}"
-    return "Use safety exit"
+    return "Use stop loss"
+
+
+def _loop_stop_loss_value(fields: dict[str, Any]) -> Any:
+    return fields.get("Stop loss") or fields.get("Safety exit / stop guidance") or "n/a"
 
 
 def _loop_take_profit_text(entry: Any, take_profit: Any) -> str:
@@ -1738,7 +1765,7 @@ def render_opportunities_dashboard(snapshot: dict[str, Any], refresh_seconds: in
     .paper-ledger-head,
     .paper-ledger-row {{
       display: grid;
-      grid-template-columns: 1.1fr 0.75fr 1.25fr 0.9fr 0.85fr 0.8fr 0.85fr 0.95fr 0.95fr;
+      grid-template-columns: 1.1fr 0.75fr 1.25fr 0.9fr 0.85fr 0.8fr 0.85fr 0.9fr minmax(190px, 1.45fr);
       gap: 8px;
       align-items: center;
     }}
@@ -1757,6 +1784,18 @@ def render_opportunities_dashboard(snapshot: dict[str, Any], refresh_seconds: in
       font-size: 13px;
     }}
     .paper-ledger-row strong {{ color: var(--text); }}
+    .balance-equation {{
+      display: inline-flex;
+      align-items: baseline;
+      justify-content: flex-end;
+      gap: 7px;
+      flex-wrap: wrap;
+      line-height: 1.25;
+    }}
+    .balance-equation .operator {{ color: #667085; }}
+    .balance-equation .gain {{ color: #079455; }}
+    .balance-equation .loss {{ color: #d92d20; }}
+    .balance-equation strong {{ font-size: 15px; }}
     .paper-mini-market {{
       display: grid;
       gap: 4px;
@@ -1791,7 +1830,7 @@ def render_opportunities_dashboard(snapshot: dict[str, Any], refresh_seconds: in
     .paper-list {{ display: grid; gap: 10px; }}
     .paper-trade {{
       display: grid;
-      grid-template-columns: 150px minmax(260px, 1fr) 140px;
+      grid-template-columns: 150px minmax(260px, 1fr) minmax(210px, 0.7fr);
       gap: 12px;
       align-items: start;
       border: 1px solid var(--line);
@@ -1811,7 +1850,8 @@ def render_opportunities_dashboard(snapshot: dict[str, Any], refresh_seconds: in
     }}
     .strategy-chip.grid {{ color: #065f46; background: #d1fae5; border: 1px solid #a7f3d0; }}
     .strategy-chip.loop {{ color: #3730a3; background: #e0e7ff; border: 1px solid #c7d2fe; }}
-    .paper-result {{ font-size: 20px; font-weight: 900; text-align: right; }}
+    .paper-result {{ font-size: 18px; font-weight: 900; text-align: right; }}
+    .paper-result .balance-equation {{ justify-content: flex-end; }}
     .paper-detail {{
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -2619,11 +2659,12 @@ def _opportunity_paper_cards(opportunity_paper: dict[str, Any], filters: dict[st
     if paper_filter not in {"all", "grid", "loop"}:
         paper_filter = "all"
     rows = _paper_filter_rows(all_rows, paper_filter)
-    stats = _paper_stats_html(rows)
+    starting_balance = float(opportunity_paper.get("starting_balance_usd", 10000.0) or 10000.0)
+    stats = _paper_stats_html(rows, starting_balance)
     ledger = _paper_ledger_rows(rows) if rows else '<div class="empty-card">No paper trades yet. Ready Now setups will start tracking automatically.</div>'
     return (
         '<section id="paper-performance" class="panel paper-section">'
-        f'<div class="paper-head"><div><h2>Paper Trading Performance</h2><div class="muted">{investment} simulated per Ready Now setup. Fee estimate: {fee}. Separate from real Bitsgap.</div>{_paper_tabs(filters, paper_filter)}</div><a class="top-link" href="/opportunities#top" aria-label="Back to top">&uarr;</a></div>'
+        f'<div class="paper-head"><div><h2>Paper Trading Performance</h2><div class="muted">{investment} simulated per Ready Now setup. Starting paper balance: {_money(starting_balance)}. Exposure is separate from balance.</div>{_paper_tabs(filters, paper_filter)}</div><a class="top-link" href="/opportunities#top" aria-label="Back to top">&uarr;</a></div>'
         f'<div class="paper-stats">{stats}</div>'
         f'{ledger}'
         "</section>"
@@ -2649,11 +2690,12 @@ def _opportunity_paper_cards(opportunity_paper: dict[str, Any], filters: dict[st
     if paper_filter not in {"all", "grid", "loop"}:
         paper_filter = "all"
     if paper_filter == "grid":
-        sections = _paper_strategy_section("GRID", grid_rows, grid_display_rows)
+        sections = _paper_strategy_section("GRID", grid_rows, grid_display_rows, float(opportunity_paper.get("starting_balance_usd", 10000.0) or 10000.0))
     elif paper_filter == "loop":
-        sections = _paper_strategy_section("LOOP", loop_rows, loop_display_rows)
+        sections = _paper_strategy_section("LOOP", loop_rows, loop_display_rows, float(opportunity_paper.get("starting_balance_usd", 10000.0) or 10000.0))
     else:
-        sections = _paper_strategy_section("GRID", grid_rows, grid_display_rows) + _paper_strategy_section("LOOP", loop_rows, loop_display_rows)
+        starting_balance = float(opportunity_paper.get("starting_balance_usd", 10000.0) or 10000.0)
+        sections = _paper_strategy_section("GRID", grid_rows, grid_display_rows, starting_balance) + _paper_strategy_section("LOOP", loop_rows, loop_display_rows, starting_balance)
     return (
         '<section id="paper-performance" class="panel paper-section">'
         f'<div class="paper-head"><div><h2>Paper Trading Performance</h2><div class="muted">{investment} simulated per deploy-ready setup. Fee estimate: {fee}. Separate from real Bitsgap.</div>{_paper_tabs(filters, paper_filter)}</div><a class="top-link" href="/opportunities#top" aria-label="Back to top">↑</a></div>'
@@ -2732,18 +2774,17 @@ def _paper_filter_rows(rows: list[dict[str, Any]], selected: str) -> list[dict[s
     return rows
 
 
-def _paper_stats_html(rows: list[dict[str, Any]]) -> str:
+def _paper_stats_html(rows: list[dict[str, Any]], starting_balance: float = 10000.0) -> str:
     open_rows = [row for row in rows if row.get("status") == "OPEN"]
     closed_rows = [row for row in rows if row.get("status") == "CLOSED"]
     wins = [row for row in closed_rows if float(row.get("net_return_pct", 0.0) or 0.0) > 0]
     losses = max(len(closed_rows) - len(wins), 0)
-    trade_size = float(rows[0].get("investment_usd", 1000.0) or 1000.0) if rows else 1000.0
     realized_pnl = sum(float(row.get("net_pnl_usd", 0.0) or 0.0) for row in closed_rows)
     open_pnl = sum(float(row.get("unrealized_pnl_usd", 0.0) or 0.0) for row in open_rows)
-    equity_pnl = realized_pnl + open_pnl
-    closed_equity = (len(closed_rows) * trade_size) + realized_pnl
-    open_equity = (len(open_rows) * trade_size) + open_pnl
-    total_equity = closed_equity + open_equity
+    total_pnl = realized_pnl + open_pnl
+    paper_balance = starting_balance + total_pnl
+    open_exposure = sum(float(row.get("investment_usd", 1000.0) or 1000.0) for row in open_rows)
+    tested_volume = sum(float(row.get("investment_usd", 1000.0) or 1000.0) for row in rows)
     win_rate = _win_rate_text(len(wins), len(closed_rows))
     return "".join(
         _paper_stat(label, value)
@@ -2752,12 +2793,12 @@ def _paper_stats_html(rows: list[dict[str, Any]]) -> str:
             ("Closed", len(closed_rows)),
             ("W / L", f"{len(wins)} / {losses}"),
             ("Win Rate", win_rate),
-            ("Realized PnL", _money(realized_pnl)),
-            ("Open PnL", _money(open_pnl)),
-            ("Equity PnL", _money(equity_pnl)),
-            ("Closed Equity", _money(closed_equity)),
-            ("Open Equity", _money(open_equity)),
-            ("Total Equity", _money(total_equity)),
+            ("Realized PnL", _signed_money(realized_pnl)),
+            ("Open PnL", _signed_money(open_pnl)),
+            ("Total PnL", _signed_money(total_pnl)),
+            ("Paper Balance", _money(paper_balance)),
+            ("Open Exposure", _money(open_exposure)),
+            ("Tested Volume", _money(tested_volume)),
         ]
     )
 
@@ -2782,7 +2823,7 @@ def _paper_trade_row(row: dict[str, Any]) -> str:
     is_closed = status == "CLOSED"
     investment = float(row.get("investment_usd", 1000.0) or 1000.0)
     pnl = float(row.get("net_pnl_usd", 0.0) or 0.0) if is_closed else float(row.get("unrealized_pnl_usd", 0.0) or 0.0)
-    end_balance = investment + pnl
+    balance_equation = _balance_equation_html(investment, pnl)
     chip_class = "grid" if strategy.upper() == "GRID" else "loop"
     chip_text = "Grid" if strategy.upper() == "GRID" else "Loop"
     end_date = _short_time(row.get("closed_at", "")) if is_closed else "Open"
@@ -2799,7 +2840,7 @@ def _paper_trade_row(row: dict[str, Any]) -> str:
         f'<div>{_escape(end_date)}</div>'
         f'<div>{_escape(exit_price)}</div>'
         f'<div>{_money(investment)}</div>'
-        f'<div class="{result_class}"><strong>{_money(end_balance)}</strong><span class="subline">{_money(pnl)}</span></div>'
+        f'<div class="{result_class}">{balance_equation}</div>'
         "</div>"
     )
 
@@ -2809,16 +2850,23 @@ def _paper_live_chart(row: dict[str, Any]) -> str:
     current = row.get("current_price") or row.get("entry_price")
     change = float(row.get("recent_change_pct", 0.0) or 0.0)
     color = "#079455" if change >= 0 else "#d92d20"
+    status = str(row.get("status", "OPEN")).upper()
+    live_badge = '<span class="live-badge tiny">LIVE</span>' if status == "OPEN" else ""
     return (
         '<div class="paper-mini-market">'
         f'<div><strong>{_price(current)}</strong> <span style="color:{color};font-weight:900;">{_escape(_signed_pct(change))}</span></div>'
         f'{_sparkline_svg(closes, color)}'
-        '<span class="live-badge tiny">LIVE</span>'
+        f'{live_badge}'
         "</div>"
     )
 
 
-def _paper_strategy_section(strategy: str, rows: list[dict[str, Any]], display_rows: list[dict[str, Any]]) -> str:
+def _paper_strategy_section(
+    strategy: str,
+    rows: list[dict[str, Any]],
+    display_rows: list[dict[str, Any]],
+    starting_balance: float = 10000.0,
+) -> str:
     if not rows:
         return (
             '<div class="paper-strategy-block">'
@@ -2830,13 +2878,12 @@ def _paper_strategy_section(strategy: str, rows: list[dict[str, Any]], display_r
     closed_rows = [row for row in rows if row.get("status") == "CLOSED"]
     wins = [row for row in closed_rows if float(row.get("net_return_pct", 0.0) or 0.0) > 0]
     losses = max(len(closed_rows) - len(wins), 0)
-    trade_size = float(rows[0].get("investment_usd", 1000.0) or 1000.0)
     realized_pnl = sum(float(row.get("net_pnl_usd", 0.0) or 0.0) for row in closed_rows)
     open_pnl = sum(float(row.get("unrealized_pnl_usd", 0.0) or 0.0) for row in open_rows)
-    equity_pnl = realized_pnl + open_pnl
-    closed_equity = (len(closed_rows) * trade_size) + realized_pnl
-    open_equity = (len(open_rows) * trade_size) + open_pnl
-    total_equity = closed_equity + open_equity
+    total_pnl = realized_pnl + open_pnl
+    paper_balance = starting_balance + total_pnl
+    open_exposure = sum(float(row.get("investment_usd", 1000.0) or 1000.0) for row in open_rows)
+    tested_volume = sum(float(row.get("investment_usd", 1000.0) or 1000.0) for row in rows)
     win_rate = _win_rate_text(len(wins), len(closed_rows))
     stat_html = "".join(
         _paper_stat(label, value)
@@ -2845,12 +2892,12 @@ def _paper_strategy_section(strategy: str, rows: list[dict[str, Any]], display_r
             ("Closed", len(closed_rows)),
             ("W / L", f"{len(wins)} / {losses}"),
             ("Win Rate", win_rate),
-            ("Realized PnL", _money(realized_pnl)),
-            ("Open PnL", _money(open_pnl)),
-            ("Equity PnL", _money(equity_pnl)),
-            ("Closed Equity", _money(closed_equity)),
-            ("Open Equity", _money(open_equity)),
-            ("Total Equity", _money(total_equity)),
+            ("Realized PnL", _signed_money(realized_pnl)),
+            ("Open PnL", _signed_money(open_pnl)),
+            ("Total PnL", _signed_money(total_pnl)),
+            ("Paper Balance", _money(paper_balance)),
+            ("Open Exposure", _money(open_exposure)),
+            ("Tested Volume", _money(tested_volume)),
         ]
     )
     trade_html = "".join(_paper_trade_card(row) for row in display_rows[:8])
@@ -2879,7 +2926,9 @@ def _paper_trade_card(row: dict[str, Any]) -> str:
     is_closed = status == "CLOSED"
     pnl_value = row.get("net_pnl_usd") if is_closed else row.get("unrealized_pnl_usd")
     pct_value = row.get("net_return_pct") if is_closed else row.get("unrealized_net_return_pct")
-    pnl = _money(pnl_value or 0.0)
+    investment = float(row.get("investment_usd", 1000.0) or 1000.0)
+    pnl_number = float(pnl_value or 0.0)
+    balance_equation = _balance_equation_html(investment, pnl_number)
     pct = _signed_pct(float(pct_value or 0.0))
     result_class = "good" if float(pct_value or 0.0) >= 0 else "bad"
     exit_text = _price(row.get("exit_price")) if is_closed else "Open"
@@ -2896,13 +2945,13 @@ def _paper_trade_card(row: dict[str, Any]) -> str:
         f'<div><strong>Entry:</strong> {_price(row.get("entry_price"))}</div>'
         f'<div><strong>Exit:</strong> {_escape(exit_text)}</div>'
         f'<div><strong>TP:</strong> {_price(row.get("take_profit_price"))}</div>'
-        f'<div><strong>SL / Safety:</strong> {_price(row.get("stop_price"))}</div>'
+        f'<div><strong>Stop Loss:</strong> {_price(row.get("stop_price"))}</div>'
         f'<div><strong>Settings:</strong> {_escape(_paper_settings(row))}</div>'
         f'<div><strong>Reason:</strong> {_escape(reason or note or "Watching setup.")}</div>'
         "</div>"
         f'<div class="subline" style="margin-top:8px;">Last checked {_escape(_short_time(row.get("last_checked_at", "")))}</div>'
         "</div>"
-        f'<div class="paper-result {result_class}">{pnl}<div class="subline">{pct}</div></div>'
+        f'<div class="paper-result {result_class}">{balance_equation}<div class="subline">{pct}</div></div>'
         "</article>"
     )
 
@@ -2942,7 +2991,7 @@ def _paper_settings(row: dict[str, Any]) -> str:
             f"Distance {fields.get('Order distance')}",
             f"Count {fields.get('Order count')}",
             f"TP {fields.get('Take profit')}",
-            f"Safety {fields.get('Safety exit / stop guidance')}",
+            f"SL {_loop_stop_loss_value(fields)}",
         ]
     return " | ".join(str(part) for part in parts if "None" not in str(part))
 
@@ -2953,6 +3002,35 @@ def _money(value: Any) -> str:
     except (TypeError, ValueError):
         number = 0.0
     return f"${number:,.2f}"
+
+
+def _signed_money(value: Any) -> str:
+    try:
+        number = float(value or 0.0)
+    except (TypeError, ValueError):
+        number = 0.0
+    sign = "+" if number >= 0 else "-"
+    return f"{sign}${abs(number):,.2f}"
+
+
+def _balance_formula(investment: float, pnl: float) -> str:
+    operator = "+" if pnl >= 0 else "-"
+    return f"{_money(investment)} {operator} {_money(abs(pnl))}"
+
+
+def _balance_equation_html(investment: float, pnl: float) -> str:
+    operator = "+" if pnl >= 0 else "-"
+    end_balance = investment + pnl
+    pnl_class = "gain" if pnl >= 0 else "loss"
+    return (
+        '<span class="balance-equation">'
+        f'<span>{_escape(_money(investment))}</span>'
+        f' <span class="operator">{operator}</span> '
+        f'<span class="{pnl_class}">{_escape(_money(abs(pnl)))}</span>'
+        ' <span class="operator">=</span> '
+        f'<strong>{_escape(_money(end_balance))}</strong>'
+        "</span>"
+    )
 
 
 def _market_panel(row: dict[str, Any]) -> str:
@@ -3205,7 +3283,7 @@ def _settings_summary(row: dict[str, Any]) -> str:
             ("Order count", fields.get("Order count")),
             ("Entry zone", row.get("entry_zone")),
             ("TP", fields.get("Take profit")),
-            ("Safety exit", fields.get("Safety exit / stop guidance")),
+            ("Stop loss", _loop_stop_loss_value(fields)),
             ("Live", "Now"),
         ]
     visible = [
@@ -3227,16 +3305,16 @@ def _field_help_text(label: str) -> str:
     key = label.lower()
     if key == "tp":
         return "Starting take-profit setting for Bitsgap. If this setup keeps improving, the app may later alert you to move TP higher, take profit, or trail profit."
-    if key in {"sl", "safety exit"}:
+    if key in {"sl", "stop loss"}:
         return "Starting protection level. If price moves in your favor, the app may later alert you to move this closer to breakeven or into profit to protect capital."
     if key == "trailing up":
         return "Starting trailing-up setting. If price keeps rising and the setup remains healthy, the app may alert you when trailing up is useful."
     if key == "trailing down":
         return "Starting trailing-down setting. Usually off for safer setups. The app may only suggest it later if market conditions justify it."
     if key == "protection":
-        return "These are the starting protection rules. After you mark a setup active, the app watches the market and may alert you to update TP, SL/safety exit, trailing, or exit based on current conditions."
+        return "These are the starting protection rules. After you mark a setup active, the app watches the market and may alert you to update TP, stop loss, trailing, or exit based on current conditions."
     if key == "live":
-        return "This setup is live from current Kraken data. After you mark it active, the app may alert you to update TP, move the safety exit, trail profit, or exit. This is not Bitsgap pump protection."
+        return "This setup is live from current Kraken data. After you mark it active, the app may alert you to update TP, move the stop loss, trail profit, or exit. This is not Bitsgap pump protection."
     return ""
 
 

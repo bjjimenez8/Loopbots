@@ -15,6 +15,7 @@ import pandas as pd
 class OpportunityPaperConfig:
     state_file: str
     investment_usd: float = 1000.0
+    starting_balance_usd: float = 10000.0
     fee_pct: float = 0.40
 
 
@@ -61,10 +62,11 @@ class OpportunityPaperTracker:
         return {
             "generated_at": datetime.now(UTC).isoformat(),
             "investment_usd": self.config.investment_usd,
+            "starting_balance_usd": self.config.starting_balance_usd,
             "fee_pct": self.config.fee_pct,
             "open": open_trades,
             "closed": closed_trades[-25:],
-            "stats": _stats(closed_trades, open_trades, self.config.investment_usd),
+            "stats": _stats(closed_trades, open_trades, self.config.investment_usd, self.config.starting_balance_usd),
         }
 
     def _load_state(self) -> list[dict[str, Any]]:
@@ -247,7 +249,7 @@ def _take_profit_price(strategy: str, entry: float | None, fields: dict[str, Any
 
 def _stop_price(strategy: str, entry: float | None, fields: dict[str, Any]) -> float | None:
     if strategy == "LOOP":
-        return _price(fields.get("Safety exit / stop guidance"))
+        return _price(fields.get("Stop loss")) or _price(fields.get("Safety exit / stop guidance"))
     pct = _percent(fields.get("Stop loss"))
     if entry is not None and pct is not None:
         return entry * (1 - pct / 100)
@@ -263,9 +265,15 @@ def _merge_trade(trade: dict[str, Any], updated: dict[str, Any]) -> bool:
     return changed
 
 
-def _stats(closed: list[dict[str, Any]], open_trades: list[dict[str, Any]], investment_usd: float) -> dict[str, Any]:
+def _stats(
+    closed: list[dict[str, Any]],
+    open_trades: list[dict[str, Any]],
+    investment_usd: float,
+    starting_balance_usd: float,
+) -> dict[str, Any]:
     wins = [row for row in closed if float(row.get("net_return_pct", 0.0) or 0.0) > 0]
     total_pnl = sum(float(row.get("net_pnl_usd", 0.0) or 0.0) for row in closed)
+    open_pnl = sum(float(row.get("unrealized_pnl_usd", 0.0) or 0.0) for row in open_trades)
     return {
         "open": len(open_trades),
         "closed": len(closed),
@@ -273,7 +281,11 @@ def _stats(closed: list[dict[str, Any]], open_trades: list[dict[str, Any]], inve
         "losses": max(len(closed) - len(wins), 0),
         "win_rate_pct": round((len(wins) / len(closed)) * 100, 2) if closed else 0.0,
         "net_pnl_usd": round(total_pnl, 2),
+        "open_pnl_usd": round(open_pnl, 2),
+        "equity_pnl_usd": round(total_pnl + open_pnl, 2),
+        "paper_balance_usd": round(starting_balance_usd + total_pnl + open_pnl, 2),
         "investment_per_trade": investment_usd,
+        "starting_balance_usd": starting_balance_usd,
     }
 
 

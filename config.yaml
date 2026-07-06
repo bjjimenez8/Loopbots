@@ -93,6 +93,12 @@ paper_tracking:
   lookback_days: 7
   retention_days: 30
 
+opportunity_paper:
+  state_file: data/opportunity_paper_trades.json
+  investment_usd: 1000
+  starting_balance_usd: 10000
+  fee_pct: 0.40
+
 dashboard:
   enabled: true
   host: 127.0.0.1

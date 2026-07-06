@@ -119,7 +119,7 @@ def _loop_opportunity(row: dict[str, Any], proof_by_symbol: dict[str, dict[str, 
         "Order distance": _pct_text(row.get("order_distance_pct")),
         "Order count": _text(row.get("order_count"), "n/a"),
         "Take profit": _price_or_note(row.get("take_profit_price"), "When strategy target is reached"),
-        "Safety exit / stop guidance": _price_or_note(row.get("safety_exit_price"), "Stop if safety exit triggers"),
+        "Stop loss": _price_or_note(row.get("safety_exit_price"), "Stop if stop loss triggers"),
         "Profit protection": "If price pushes above TP area, trail profit. If momentum weakens, exit instead of waiting.",
     }
     return Opportunity(
@@ -294,7 +294,7 @@ def _practical_reason(status: OpportunityStatus, debug: dict[str, Any], strategy
         if strategy == "LOOP":
             net = debug.get("estimated_net_profit_pct")
             if isinstance(net, (int, float)):
-                return f"Usable now. TP has room after fees, about {net:.2f}% net if it hits cleanly. Use the safety exit."
+                return f"Usable now. TP has room after fees, about {net:.2f}% net if it hits cleanly. Use the stop loss."
         return "Usable now. Range is tradable with TP, stop loss, and trailing-up protection."
     if status == "Avoid":
         reasons = debug.get("avoid_reasons") or debug.get("ready_blockers") or ["weak setup"]

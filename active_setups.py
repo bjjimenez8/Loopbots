@@ -101,7 +101,7 @@ def _setup_from_opportunity(opportunity: dict[str, Any], now: str) -> dict[str, 
         take_profit = entry_price * (1 + (_percent(fields.get("Take profit")) or 0) / 100) if entry_price is not None else None
     else:
         take_profit = _price(fields.get("Take profit"))
-    stop_price = _price(fields.get("Safety exit / stop guidance")) or _stop_from_pct(entry_price, fields.get("Stop loss"))
+    stop_price = _price(fields.get("Stop loss")) or _price(fields.get("Safety exit / stop guidance")) or _stop_from_pct(entry_price, fields.get("Stop loss"))
     if take_profit is None and entry_price is not None:
         take_profit = entry_price * (1 + (_percent(fields.get("Take profit")) or 0) / 100)
     return {
@@ -154,7 +154,7 @@ def _monitor_setup(setup: dict[str, Any], candles: pd.DataFrame) -> dict[str, An
 
     if stop and recent_low <= stop:
         action, health = "EXIT", "Exit Suggested"
-        guidance = "Safety exit / stop area was touched. Consider closing the manual setup."
+        guidance = "Stop loss area was touched. Consider closing the manual setup."
     elif tp and close >= tp:
         action, health = "TAKE_PROFIT", "Take Profit Suggested"
         guidance = "Take profit area is reached. Lock the win or trail only if momentum continues."
@@ -164,7 +164,7 @@ def _monitor_setup(setup: dict[str, Any], candles: pd.DataFrame) -> dict[str, An
         suggested_stop = max(stop or entry, entry * 1.01, close * 0.975)
     elif profit_pct >= 1.25:
         action, health = "MOVE_STOP_UP", "Protect Profit"
-        guidance = "Move safety exit / stop closer to breakeven to reduce give-back risk."
+        guidance = "Move stop loss closer to breakeven to reduce give-back risk."
         suggested_stop = max(stop or entry, entry * 1.001)
     elif drawdown_from_high_pct <= -3.5 or (stop_distance_pct and stop_distance_pct <= 0.6):
         action, health = "EXIT", "Exit Suggested"

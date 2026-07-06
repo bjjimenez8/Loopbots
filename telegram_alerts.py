@@ -29,7 +29,7 @@ class TelegramAlertClient:
             f"Entry: {signal.price}\n"
             f"Order Distance: {loop_plan.get('order_distance_pct', 'n/a')}%\n"
             f"Order Count: {loop_plan.get('order_count', 'n/a')}\n"
-            f"Stop Bot: {signal.safety_exit_price}\n"
+            f"Stop Loss: {signal.safety_exit_price}\n"
             f"Take Profit: {signal.take_profit_price}"
         )
         await self._send(message)
@@ -62,7 +62,7 @@ class TelegramAlertClient:
             "Action: Stop loop bot / get out\n"
             f"Current Price: {signal.price}\n"
             f"Stop Loss Hit: {signal.safety_exit_price}\n"
-            "Reason: Safety exit touched"
+            "Reason: Stop loss touched"
         )
         await self._send(message)
 

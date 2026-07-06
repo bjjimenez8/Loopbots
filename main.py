@@ -126,6 +126,7 @@ class LoopbotsApp:
             OpportunityPaperConfig(
                 state_file=str(PROJECT_ROOT / opportunity_paper_config.get("state_file", "data/opportunity_paper_trades.json")),
                 investment_usd=float(opportunity_paper_config.get("investment_usd", 1000.0)),
+                starting_balance_usd=float(opportunity_paper_config.get("starting_balance_usd", 10000.0)),
                 fee_pct=float(opportunity_paper_config.get("fee_pct", 0.40)),
             )
         )
@@ -564,12 +565,16 @@ class LoopbotsApp:
             required = ["Low price", "High price", "Grid levels", "Grid step", "Take profit", "Stop loss"]
             minimum_score = 30
         elif strategy == "LOOP":
-            required = ["Order distance", "Order count", "Take profit", "Safety exit / stop guidance"]
+            required = ["Order distance", "Order count", "Take profit", "Stop loss"]
             minimum_score = 35
         else:
             return False
         for key in required:
-            if fields.get(key) in {"", None, "n/a", "Needs live price"}:
+            if key == "Stop loss":
+                value = fields.get("Stop loss") or fields.get("Safety exit / stop guidance")
+            else:
+                value = fields.get(key)
+            if value in {"", None, "n/a", "Needs live price"}:
                 return False
         try:
             score = int(float(item.get("score", 0) or 0))
