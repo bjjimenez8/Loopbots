@@ -1021,11 +1021,13 @@ def _ready_setup_card(row: dict[str, Any]) -> str:
     action = _deploy_action(row)
     fields = _ready_settings(row)
     settings_html = "".join(_ready_field(name, value) for name, value in fields)
+    updated = _card_updated_text(row)
     return (
         '<article class="ready-card">'
         '<div>'
         f'<div class="pair">{_escape(pair)}</div>'
         f'<div class="bot-type">{_escape(strategy)} Bot &bull; Kraken</div>'
+        f'<div class="bot-type">Updated {_escape(updated)}</div>'
         f'<div class="score">Score {score}/100</div>'
         f'<div class="action-chip deploy">{_escape(action)}</div>'
         f'<div class="reason">{_escape(_short_ready_reason(row))}</div>'
@@ -1176,6 +1178,16 @@ def _entry_display(row: dict[str, Any]) -> str:
     if isinstance(market, dict) and market.get("current_price") not in {"", None}:
         return _fmt_active_price(market.get("current_price"))
     return str(row.get("entry_zone", "n/a"))
+
+
+def _card_updated_text(row: dict[str, Any]) -> str:
+    market = row.get("market_snapshot", {})
+    if isinstance(market, dict):
+        updated = market.get("updated_at")
+        if updated:
+            return _short_time(updated)
+    updated = row.get("updated_at") or row.get("generated_at")
+    return _short_time(updated) if updated else "just now"
 
 
 def _loop_stop_loss_text(entry: Any, safety: Any) -> str:
