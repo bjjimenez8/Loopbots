@@ -28,7 +28,7 @@ class OpportunityPaperTracker:
     def add_from_opportunity(self, opportunity: dict[str, Any]) -> dict[str, Any]:
         state = self._load_state()
         now = datetime.now(UTC).isoformat()
-        existing = _same_day_trade(state, opportunity, now)
+        existing = _existing_trade(state, opportunity, now)
         if existing is not None:
             return existing
         trade = _trade_from_opportunity(opportunity, now, self.config.investment_usd, self.config.fee_pct)
@@ -73,7 +73,7 @@ class OpportunityPaperTracker:
         if not self._path.exists():
             return []
         try:
-            raw = json.loads(self._path.read_text(encoding="utf-8"))
+            raw = json.loads(self._path.read_text(encoding="utf-8-sig"))
         except (OSError, json.JSONDecodeError):
             return []
         return raw if isinstance(raw, list) else []
@@ -205,18 +205,26 @@ def _active_window(trade: dict[str, Any], candles: pd.DataFrame) -> pd.DataFrame
     return candles[candles["timestamp"] >= opened]
 
 
-def _same_day_trade(state: list[dict[str, Any]], opportunity: dict[str, Any], now: str) -> dict[str, Any] | None:
+def _existing_trade(state: list[dict[str, Any]], opportunity: dict[str, Any], now: str) -> dict[str, Any] | None:
     today = now[:10]
     opportunity_id = str(opportunity.get("id", ""))
-    pair = str(opportunity.get("pair", "")).upper()
-    strategy = str(opportunity.get("strategy", "")).upper()
+    coin_key = _coin_key(opportunity.get("pair", ""))
+
+    for trade in reversed(state):
+        if trade.get("status") != "OPEN":
+            continue
+        if opportunity_id and trade.get("opportunity_id") == opportunity_id:
+            return trade
+        if coin_key and _coin_key(trade.get("pair", "")) == coin_key:
+            return trade
+
     for trade in reversed(state):
         opened_at = str(trade.get("opened_at", ""))
         if not opened_at.startswith(today):
             continue
         if opportunity_id and trade.get("opportunity_id") == opportunity_id:
             return trade
-        if str(trade.get("pair", "")).upper() == pair and str(trade.get("strategy", "")).upper() == strategy:
+        if coin_key and _coin_key(trade.get("pair", "")) == coin_key:
             return trade
     return None
 
@@ -310,3 +318,10 @@ def _float(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _coin_key(pair: Any) -> str:
+    text = str(pair or "").strip().upper()
+    if not text:
+        return ""
+    return text.split("/", 1)[0].strip()

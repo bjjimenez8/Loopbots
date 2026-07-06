@@ -27,8 +27,11 @@ class ActiveSetupStore:
 
     def add_from_opportunity(self, opportunity: dict[str, Any]) -> dict[str, Any]:
         now = datetime.now(UTC).isoformat()
-        setup = _setup_from_opportunity(opportunity, now)
         state = self._load_state()
+        existing = _existing_active_setup(state, opportunity)
+        if existing is not None:
+            return existing
+        setup = _setup_from_opportunity(opportunity, now)
         state.append(setup)
         self._save_state(state)
         return setup
@@ -81,7 +84,7 @@ class ActiveSetupStore:
         if not self._path.exists():
             return []
         try:
-            raw = json.loads(self._path.read_text(encoding="utf-8"))
+            raw = json.loads(self._path.read_text(encoding="utf-8-sig"))
         except (OSError, json.JSONDecodeError):
             return []
         return raw if isinstance(raw, list) else []
@@ -106,6 +109,7 @@ def _setup_from_opportunity(opportunity: dict[str, Any], now: str) -> dict[str, 
         take_profit = entry_price * (1 + (_percent(fields.get("Take profit")) or 0) / 100)
     return {
         "id": uuid.uuid4().hex[:12],
+        "opportunity_id": str(opportunity.get("id", "")),
         "status": "ACTIVE",
         "strategy": strategy,
         "pair": pair,
@@ -123,6 +127,19 @@ def _setup_from_opportunity(opportunity: dict[str, Any], now: str) -> dict[str, 
         "created_at": now,
         "updated_at": now,
     }
+
+
+def _existing_active_setup(state: list[dict[str, Any]], opportunity: dict[str, Any]) -> dict[str, Any] | None:
+    opportunity_id = str(opportunity.get("id", "") or "")
+    coin_key = _coin_key(opportunity.get("pair", ""))
+    for setup in reversed(state):
+        if setup.get("status") != "ACTIVE":
+            continue
+        if opportunity_id and str(setup.get("opportunity_id", "")) == opportunity_id:
+            return setup
+        if coin_key and _coin_key(setup.get("pair", "")) == coin_key:
+            return setup
+    return None
 
 
 def _monitor_setup(setup: dict[str, Any], candles: pd.DataFrame) -> dict[str, Any]:
@@ -261,3 +278,10 @@ def _float(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _coin_key(pair: Any) -> str:
+    text = str(pair or "").strip().upper()
+    if not text:
+        return ""
+    return text.split("/", 1)[0].strip()
