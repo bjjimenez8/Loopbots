@@ -1185,9 +1185,40 @@ def _card_updated_text(row: dict[str, Any]) -> str:
     if isinstance(market, dict):
         updated = market.get("updated_at")
         if updated:
-            return _short_time(updated)
+            return _relative_time_with_clock(updated)
     updated = row.get("updated_at") or row.get("generated_at")
-    return _short_time(updated) if updated else "just now"
+    return _relative_time_with_clock(updated or datetime.now().isoformat())
+
+
+def _relative_time_with_clock(value: Any) -> str:
+    parsed = _parse_time(value)
+    clock = _short_time(value)
+    if parsed is None:
+        return clock
+    now = datetime.now(parsed.tzinfo) if parsed.tzinfo is not None else datetime.now()
+    seconds = max(int((now - parsed).total_seconds()), 0)
+    if seconds < 60:
+        age = "just now"
+    elif seconds < 3600:
+        minutes = seconds // 60
+        age = f"{minutes} min ago"
+    elif seconds < 86400:
+        hours = seconds // 3600
+        age = f"{hours}h ago"
+    else:
+        days = seconds // 86400
+        age = f"{days}d ago"
+    return f"{age} - {clock}"
+
+
+def _parse_time(value: Any) -> datetime | None:
+    text = str(value or "")
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
 
 
 def _loop_stop_loss_text(entry: Any, safety: Any) -> str:
