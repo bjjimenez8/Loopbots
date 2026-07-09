@@ -10,11 +10,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlencode, urlsplit
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from paper_tracker import PaperTracker
 
 
 LOGGER = logging.getLogger(__name__)
+DASHBOARD_TIMEZONE = "America/Los_Angeles"
 
 
 @dataclass(frozen=True)
@@ -23,6 +25,7 @@ class DashboardConfig:
     host: str
     port: int
     refresh_seconds: int
+    timezone: str = "America/Los_Angeles"
 
 
 class PaperDashboardServer:
@@ -40,8 +43,10 @@ class PaperDashboardServer:
         use_setup_handler: Callable[[dict[str, list[str]]], None] | None = None,
         finish_setup_handler: Callable[[dict[str, list[str]]], None] | None = None,
     ) -> None:
+        global DASHBOARD_TIMEZONE
         self.tracker = tracker
         self.config = config
+        DASHBOARD_TIMEZONE = config.timezone
         self.grid_snapshot_provider = grid_snapshot_provider
         self.loop_details_provider = loop_details_provider
         self.research_provider = research_provider
@@ -838,7 +843,7 @@ def _render_ready_right_now_dashboard(snapshot: dict[str, Any], payload: dict[st
       margin-top: 14px;
     }}
     .paper-ledger-head,
-    .paper-ledger-row {{
+    .paper-ledger-main {{
       display: grid;
       grid-template-columns: 1.1fr 0.75fr 1.25fr 0.9fr 0.85fr 0.8fr 0.85fr 0.9fr minmax(190px, 1.45fr);
       gap: 8px;
@@ -858,19 +863,40 @@ def _render_ready_right_now_dashboard(snapshot: dict[str, Any], payload: dict[st
       padding: 10px;
       font-size: 13px;
     }}
+    .paper-ledger-main {{
+      align-items: center;
+    }}
     .paper-ledger-row strong {{ color: var(--text); }}
     .balance-equation {{
-      display: inline-flex;
-      align-items: baseline;
-      justify-content: flex-end;
-      gap: 7px;
-      flex-wrap: wrap;
+      display: inline-grid;
+      grid-template-columns: auto auto auto auto;
+      align-items: end;
+      justify-content: end;
+      column-gap: 7px;
+      row-gap: 4px;
       line-height: 1.25;
     }}
-    .balance-equation .operator {{ color: #667085; }}
+    .balance-equation .base,
+    .balance-equation .operator {{ color: var(--text); }}
+    .balance-equation .pnl-stack {{
+      display: inline-grid;
+      gap: 2px;
+      text-align: center;
+    }}
+    .balance-equation .pnl-label {{
+      color: var(--muted);
+      font-size: 9px;
+      font-weight: 900;
+      line-height: 1;
+      text-transform: uppercase;
+    }}
     .balance-equation .gain {{ color: var(--green); }}
     .balance-equation .loss {{ color: #b42318; }}
-    .balance-equation strong {{ font-size: 15px; }}
+    .balance-equation strong {{
+      grid-column: 1 / -1;
+      justify-self: end;
+      font-size: 15px;
+    }}
     .paper-mini-market {{
       display: grid;
       gap: 4px;
@@ -948,6 +974,42 @@ def _render_ready_right_now_dashboard(snapshot: dict[str, Any], payload: dict[st
       font-size: 12px;
     }}
     .paper-detail strong {{ color: var(--text); }}
+    .paper-specifics {{
+      margin-top: 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #f8fafc;
+      padding: 9px 10px;
+    }}
+    .paper-specifics summary {{
+      cursor: pointer;
+      color: var(--text);
+      font-size: 12px;
+      font-weight: 900;
+      text-transform: uppercase;
+    }}
+    .paper-specifics-grid {{
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 6px;
+      margin-top: 8px;
+    }}
+    .paper-specifics-grid div {{
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #ffffff;
+      padding: 6px 7px;
+      color: var(--text);
+      font-size: 12px;
+      font-weight: 800;
+    }}
+    .paper-specifics-grid span {{
+      display: block;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 900;
+      text-transform: uppercase;
+    }}
     .risk-note {{ color: var(--muted); font-size: 12px; margin-top: 18px; }}
     @media (max-width: 900px) {{
       header {{ display: block; }}
@@ -955,8 +1017,8 @@ def _render_ready_right_now_dashboard(snapshot: dict[str, Any], payload: dict[st
       .quick-tabs {{ margin-top: 0; }}
       .ready-card, .bot-card, .paper-trade {{ grid-template-columns: 1fr; }}
       .paper-ledger-head {{ display: none; }}
-      .paper-ledger-row {{ grid-template-columns: 1fr 1fr; }}
-      .settings, .paper-detail {{ grid-template-columns: 1fr; }}
+      .paper-ledger-main {{ grid-template-columns: 1fr 1fr; }}
+      .settings, .paper-detail, .paper-specifics-grid {{ grid-template-columns: 1fr; }}
       .paper-result {{ text-align: left; }}
       .paper-head, .paper-strategy-head {{ display: block; }}
       .paper-stats {{ justify-content: flex-start; margin-top: 10px; }}
@@ -1838,7 +1900,7 @@ def render_opportunities_dashboard(snapshot: dict[str, Any], refresh_seconds: in
       margin-top: 14px;
     }}
     .paper-ledger-head,
-    .paper-ledger-row {{
+    .paper-ledger-main {{
       display: grid;
       grid-template-columns: 1.1fr 0.75fr 1.25fr 0.9fr 0.85fr 0.8fr 0.85fr 0.9fr minmax(190px, 1.45fr);
       gap: 8px;
@@ -1858,19 +1920,40 @@ def render_opportunities_dashboard(snapshot: dict[str, Any], refresh_seconds: in
       padding: 10px;
       font-size: 13px;
     }}
+    .paper-ledger-main {{
+      align-items: center;
+    }}
     .paper-ledger-row strong {{ color: var(--text); }}
     .balance-equation {{
-      display: inline-flex;
-      align-items: baseline;
-      justify-content: flex-end;
-      gap: 7px;
-      flex-wrap: wrap;
+      display: inline-grid;
+      grid-template-columns: auto auto auto auto;
+      align-items: end;
+      justify-content: end;
+      column-gap: 7px;
+      row-gap: 4px;
       line-height: 1.25;
     }}
-    .balance-equation .operator {{ color: #667085; }}
+    .balance-equation .base,
+    .balance-equation .operator {{ color: var(--text); }}
+    .balance-equation .pnl-stack {{
+      display: inline-grid;
+      gap: 2px;
+      text-align: center;
+    }}
+    .balance-equation .pnl-label {{
+      color: var(--muted);
+      font-size: 9px;
+      font-weight: 900;
+      line-height: 1;
+      text-transform: uppercase;
+    }}
     .balance-equation .gain {{ color: #079455; }}
     .balance-equation .loss {{ color: #d92d20; }}
-    .balance-equation strong {{ font-size: 15px; }}
+    .balance-equation strong {{
+      grid-column: 1 / -1;
+      justify-self: end;
+      font-size: 15px;
+    }}
     .paper-mini-market {{
       display: grid;
       gap: 4px;
@@ -1942,6 +2025,42 @@ def render_opportunities_dashboard(snapshot: dict[str, Any], refresh_seconds: in
       font-size: 12px;
     }}
     .paper-detail strong {{ color: var(--text); }}
+    .paper-specifics {{
+      margin-top: 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #f9fafb;
+      padding: 9px 10px;
+    }}
+    .paper-specifics summary {{
+      cursor: pointer;
+      color: var(--text);
+      font-size: 12px;
+      font-weight: 900;
+      text-transform: uppercase;
+    }}
+    .paper-specifics-grid {{
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 6px;
+      margin-top: 8px;
+    }}
+    .paper-specifics-grid div {{
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #ffffff;
+      padding: 6px 7px;
+      color: var(--text);
+      font-size: 12px;
+      font-weight: 800;
+    }}
+    .paper-specifics-grid span {{
+      display: block;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 900;
+      text-transform: uppercase;
+    }}
     .empty-card {{
       padding: 28px;
       color: var(--muted);
@@ -1960,7 +2079,7 @@ def render_opportunities_dashboard(snapshot: dict[str, Any], refresh_seconds: in
       .active-card {{ grid-template-columns: 1fr; }}
       .paper-trade {{ grid-template-columns: 1fr; }}
       .paper-ledger-head {{ display: none; }}
-      .paper-ledger-row {{ grid-template-columns: 1fr 1fr; }}
+      .paper-ledger-main {{ grid-template-columns: 1fr 1fr; }}
       .paper-result {{ text-align: left; }}
       .market-panel {{ grid-template-columns: 1fr; }}
       .settings-cell {{ border-left: 0; border-top: 1px solid var(--line); padding-left: 0; padding-top: 14px; }}
@@ -1974,7 +2093,7 @@ def render_opportunities_dashboard(snapshot: dict[str, Any], refresh_seconds: in
       .paper-head {{ display: block; }}
       .paper-strategy-head {{ display: block; }}
       .paper-stats {{ justify-content: flex-start; margin-top: 10px; }}
-      .paper-detail {{ grid-template-columns: 1fr; }}
+      .paper-detail, .paper-specifics-grid {{ grid-template-columns: 1fr; }}
     }}
   </style>
 </head>
@@ -2738,9 +2857,10 @@ def _opportunity_paper_cards(opportunity_paper: dict[str, Any], filters: dict[st
     starting_balance = float(opportunity_paper.get("starting_balance_usd", 10000.0) or 10000.0)
     stats = _paper_stats_html(rows, starting_balance)
     ledger = _paper_ledger_rows(rows) if rows else '<div class="empty-card">No paper trades yet. Ready Now setups will start tracking automatically.</div>'
+    timezone_note = _dashboard_timezone_label()
     return (
         '<section id="paper-performance" class="panel paper-section">'
-        f'<div class="paper-head"><div><h2>Paper Trading Performance</h2><div class="muted">{investment} simulated per Ready Now setup. Starting paper balance: {_money(starting_balance)}. Exposure is separate from balance.</div>{_paper_tabs(filters, paper_filter)}</div><a class="top-link" href="/opportunities#top" aria-label="Back to top">&uarr;</a></div>'
+        f'<div class="paper-head"><div><h2>Paper Trading Performance</h2><div class="muted">{investment} simulated per Ready Now setup. Times shown in {timezone_note}.</div>{_paper_tabs(filters, paper_filter)}</div><a class="top-link" href="/opportunities#top" aria-label="Back to top">&uarr;</a></div>'
         f'<div class="paper-stats">{stats}</div>'
         f'{ledger}'
         "</section>"
@@ -2774,7 +2894,7 @@ def _opportunity_paper_cards(opportunity_paper: dict[str, Any], filters: dict[st
         sections = _paper_strategy_section("GRID", grid_rows, grid_display_rows, starting_balance) + _paper_strategy_section("LOOP", loop_rows, loop_display_rows, starting_balance)
     return (
         '<section id="paper-performance" class="panel paper-section">'
-        f'<div class="paper-head"><div><h2>Paper Trading Performance</h2><div class="muted">{investment} simulated per deploy-ready setup. Fee estimate: {fee}. Separate from real Bitsgap.</div>{_paper_tabs(filters, paper_filter)}</div><a class="top-link" href="/opportunities#top" aria-label="Back to top">↑</a></div>'
+        f'<div class="paper-head"><div><h2>Paper Trading Performance</h2><div class="muted">{investment} simulated per deploy-ready setup. Fee estimate: {fee}. Times shown in {_dashboard_timezone_label()}.</div>{_paper_tabs(filters, paper_filter)}</div><a class="top-link" href="/opportunities#top" aria-label="Back to top">↑</a></div>'
         f'{sections}'
         "</section>"
     )
@@ -2855,12 +2975,6 @@ def _paper_stats_html(rows: list[dict[str, Any]], starting_balance: float = 1000
     closed_rows = [row for row in rows if row.get("status") == "CLOSED"]
     wins = [row for row in closed_rows if float(row.get("net_return_pct", 0.0) or 0.0) > 0]
     losses = max(len(closed_rows) - len(wins), 0)
-    realized_pnl = sum(float(row.get("net_pnl_usd", 0.0) or 0.0) for row in closed_rows)
-    open_pnl = sum(float(row.get("unrealized_pnl_usd", 0.0) or 0.0) for row in open_rows)
-    total_pnl = realized_pnl + open_pnl
-    paper_balance = starting_balance + total_pnl
-    open_exposure = sum(float(row.get("investment_usd", 1000.0) or 1000.0) for row in open_rows)
-    tested_volume = sum(float(row.get("investment_usd", 1000.0) or 1000.0) for row in rows)
     win_rate = _win_rate_text(len(wins), len(closed_rows))
     return "".join(
         _paper_stat(label, value)
@@ -2869,12 +2983,6 @@ def _paper_stats_html(rows: list[dict[str, Any]], starting_balance: float = 1000
             ("Closed", len(closed_rows)),
             ("W / L", f"{len(wins)} / {losses}"),
             ("Win Rate", win_rate),
-            ("Realized PnL", _signed_money(realized_pnl)),
-            ("Open PnL", _signed_money(open_pnl)),
-            ("Total PnL", _signed_money(total_pnl)),
-            ("Paper Balance", _money(paper_balance)),
-            ("Open Exposure", _money(open_exposure)),
-            ("Tested Volume", _money(tested_volume)),
         ]
     )
 
@@ -2884,8 +2992,8 @@ def _paper_ledger_rows(rows: list[dict[str, Any]]) -> str:
     return (
         '<div class="paper-ledger" role="table" aria-label="Paper trades">'
         '<div class="paper-ledger-head" role="row">'
-        '<div>Pair</div><div>Bot Type</div><div>Live Chart</div><div>Start Date</div><div>Entry Price</div>'
-        '<div>End Date</div><div>Exit Price</div><div>Start Balance</div><div>End Balance</div>'
+        '<div>Pair</div><div>Bot Type</div><div>Live Chart</div><div>Open Time</div><div>Entry Price</div>'
+        '<div>Closed Time</div><div>Exit Price</div><div>Start Balance</div><div>End Balance</div>'
         "</div>"
         f"{trade_rows}"
         "</div>"
@@ -2902,21 +3010,24 @@ def _paper_trade_row(row: dict[str, Any]) -> str:
     balance_equation = _balance_equation_html(investment, pnl)
     chip_class = "grid" if strategy.upper() == "GRID" else "loop"
     chip_text = "Grid" if strategy.upper() == "GRID" else "Loop"
-    end_date = _short_time(row.get("closed_at", "")) if is_closed else "Open"
+    end_date = _paper_datetime(row.get("closed_at", "")) if is_closed else "Open"
     exit_price = _price(row.get("exit_price")) if is_closed else "Open"
     result_class = "good" if pnl >= 0 else "bad"
     chart = _paper_live_chart(row)
     return (
         '<div class="paper-ledger-row" role="row">'
-        f'<div><strong>{_escape(pair)}</strong><span class="subline">{_escape(status.title())}</span></div>'
+        '<div class="paper-ledger-main">'
+        f'<div><strong>{_escape(pair)}</strong> <span class="subline">{_escape(status.title())}</span></div>'
         f'<div><span class="strategy-chip {chip_class}">{_escape(chip_text)}</span></div>'
         f"{chart}"
-        f'<div>{_escape(_short_time(row.get("opened_at", "")))}</div>'
+        f'<div>{_escape(_paper_datetime(row.get("opened_at", "")))}</div>'
         f'<div>{_price(row.get("entry_price"))}</div>'
         f'<div>{_escape(end_date)}</div>'
         f'<div>{_escape(exit_price)}</div>'
         f'<div>{_money(investment)}</div>'
         f'<div class="{result_class}">{balance_equation}</div>'
+        "</div>"
+        f"{_paper_specifics_dropdown(row)}"
         "</div>"
     )
 
@@ -2954,12 +3065,6 @@ def _paper_strategy_section(
     closed_rows = [row for row in rows if row.get("status") == "CLOSED"]
     wins = [row for row in closed_rows if float(row.get("net_return_pct", 0.0) or 0.0) > 0]
     losses = max(len(closed_rows) - len(wins), 0)
-    realized_pnl = sum(float(row.get("net_pnl_usd", 0.0) or 0.0) for row in closed_rows)
-    open_pnl = sum(float(row.get("unrealized_pnl_usd", 0.0) or 0.0) for row in open_rows)
-    total_pnl = realized_pnl + open_pnl
-    paper_balance = starting_balance + total_pnl
-    open_exposure = sum(float(row.get("investment_usd", 1000.0) or 1000.0) for row in open_rows)
-    tested_volume = sum(float(row.get("investment_usd", 1000.0) or 1000.0) for row in rows)
     win_rate = _win_rate_text(len(wins), len(closed_rows))
     stat_html = "".join(
         _paper_stat(label, value)
@@ -2968,12 +3073,6 @@ def _paper_strategy_section(
             ("Closed", len(closed_rows)),
             ("W / L", f"{len(wins)} / {losses}"),
             ("Win Rate", win_rate),
-            ("Realized PnL", _signed_money(realized_pnl)),
-            ("Open PnL", _signed_money(open_pnl)),
-            ("Total PnL", _signed_money(total_pnl)),
-            ("Paper Balance", _money(paper_balance)),
-            ("Open Exposure", _money(open_exposure)),
-            ("Tested Volume", _money(tested_volume)),
         ]
     )
     trade_html = "".join(_paper_trade_card(row) for row in display_rows[:8])
@@ -3015,17 +3114,17 @@ def _paper_trade_card(row: dict[str, Any]) -> str:
     return (
         '<article class="paper-trade">'
         f'<div><div class="paper-title">{_escape(pair)}</div><span class="strategy-chip {chip_class}">{chip_text}</span><div class="subline">{status.title()}</div>'
-        f'<div class="subline">Opened {_escape(_short_time(row.get("opened_at", "")))}</div></div>'
+        f'<div class="subline">Opened {_escape(_paper_datetime(row.get("opened_at", "")))}</div></div>'
         '<div>'
         '<div class="paper-detail">'
         f'<div><strong>Entry:</strong> {_price(row.get("entry_price"))}</div>'
         f'<div><strong>Exit:</strong> {_escape(exit_text)}</div>'
         f'<div><strong>TP:</strong> {_price(row.get("take_profit_price"))}</div>'
         f'<div><strong>Stop Loss:</strong> {_price(row.get("stop_price"))}</div>'
-        f'<div><strong>Settings:</strong> {_escape(_paper_settings(row))}</div>'
         f'<div><strong>Reason:</strong> {_escape(reason or note or "Watching setup.")}</div>'
         "</div>"
-        f'<div class="subline" style="margin-top:8px;">Last checked {_escape(_short_time(row.get("last_checked_at", "")))}</div>'
+        f"{_paper_specifics_dropdown(row)}"
+        f'<div class="subline" style="margin-top:8px;">Last checked {_escape(_paper_datetime(row.get("last_checked_at", "")))}</div>'
         "</div>"
         f'<div class="paper-result {result_class}">{balance_equation}<div class="subline">{pct}</div></div>'
         "</article>"
@@ -3072,6 +3171,48 @@ def _paper_settings(row: dict[str, Any]) -> str:
     return " | ".join(str(part) for part in parts if "None" not in str(part))
 
 
+def _paper_specifics_dropdown(row: dict[str, Any]) -> str:
+    fields = row.get("settings", {})
+    if not isinstance(fields, dict) or not fields:
+        return ""
+    strategy = str(row.get("strategy", "")).upper()
+    if strategy == "GRID":
+        items = [
+            ("Bitsgap preset", fields.get("Bitsgap preset")),
+            ("Low price", fields.get("Low price")),
+            ("High price", fields.get("High price")),
+            ("Grid levels", fields.get("Grid levels")),
+            ("Grid step", fields.get("Grid step")),
+            ("Take profit", fields.get("Take profit")),
+            ("Stop loss", fields.get("Stop loss")),
+            ("Trailing up", fields.get("Trailing up", "On")),
+            ("Trailing down", fields.get("Trailing down", "Off")),
+            ("Pump protection", fields.get("Pump protection", "On")),
+        ]
+    else:
+        items = [
+            ("Bitsgap preset", fields.get("Bitsgap preset")),
+            ("Entry price", fields.get("Entry price")),
+            ("Order distance", fields.get("Order distance")),
+            ("Order count", fields.get("Order count")),
+            ("Take profit", fields.get("Take profit")),
+            ("Stop loss", _loop_stop_loss_value(fields)),
+        ]
+    cells = "".join(
+        f'<div><span>{_escape(label)}</span>{_escape(value)}</div>'
+        for label, value in items
+        if value not in {"", None}
+    )
+    if not cells:
+        return ""
+    return (
+        '<details class="paper-specifics">'
+        '<summary>Specifics used</summary>'
+        f'<div class="paper-specifics-grid">{cells}</div>'
+        "</details>"
+    )
+
+
 def _money(value: Any) -> str:
     try:
         number = float(value or 0.0)
@@ -3100,11 +3241,11 @@ def _balance_equation_html(investment: float, pnl: float) -> str:
     pnl_class = "gain" if pnl >= 0 else "loss"
     return (
         '<span class="balance-equation">'
-        f'<span>{_escape(_money(investment))}</span>'
+        f'<span class="base">{_escape(_money(investment))}</span>'
         f' <span class="operator">{operator}</span> '
-        f'<span class="{pnl_class}">{_escape(_money(abs(pnl)))}</span>'
+        f'<span class="pnl-stack"><span class="pnl-label">PnL</span><span class="{pnl_class}">{_escape(_money(abs(pnl)))}</span></span>'
         ' <span class="operator">=</span> '
-        f'<strong>{_escape(_money(end_balance))}</strong>'
+        f'<strong class="{pnl_class}">{_escape(_money(end_balance))}</strong>'
         "</span>"
     )
 
@@ -3189,7 +3330,7 @@ def _short_time(value: Any) -> str:
         return manual
     try:
         parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
-        return parsed.strftime("%-I:%M:%S %p") if os.name != "nt" else parsed.strftime("%#I:%M:%S %p")
+        return _format_dashboard_time(parsed)
     except (TypeError, ValueError):
         return text
 
@@ -4085,4 +4226,60 @@ def _price(value: float) -> str:
 
 
 def _short_time(value: str) -> str:
-    return _manual_time(str(value or "")) or _escape(str(value or "").replace("+00:00", " UTC").replace("T", " ")[:22])
+    text = str(value or "")
+    manual = _manual_time(text)
+    if manual:
+        return manual
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        return _format_dashboard_time(parsed)
+    except (TypeError, ValueError):
+        return text.replace("+00:00", " UTC").replace("T", " ")[:22]
+
+
+def _paper_datetime(value: Any) -> str:
+    text = str(value or "")
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        return _format_dashboard_datetime(parsed)
+    except (TypeError, ValueError):
+        manual = _manual_time(text)
+        if manual:
+            return manual
+        return text.replace("+00:00", " UTC").replace("T", " ")[:22]
+
+
+def _format_dashboard_time(value: datetime) -> str:
+    try:
+        zone = ZoneInfo(DASHBOARD_TIMEZONE)
+    except ZoneInfoNotFoundError:
+        zone = value.tzinfo
+    if value.tzinfo is not None and zone is not None:
+        value = value.astimezone(zone)
+    time_fmt = "%#I:%M:%S %p" if os.name == "nt" else "%-I:%M:%S %p"
+    zone_name = value.tzname() or DASHBOARD_TIMEZONE
+    return f"{value.strftime(time_fmt)} {zone_name}"
+
+
+def _format_dashboard_datetime(value: datetime) -> str:
+    try:
+        zone = ZoneInfo(DASHBOARD_TIMEZONE)
+    except ZoneInfoNotFoundError:
+        zone = value.tzinfo
+    if value.tzinfo is not None and zone is not None:
+        value = value.astimezone(zone)
+    date_fmt = "%b %#d, %Y" if os.name == "nt" else "%b %-d, %Y"
+    time_fmt = "%#I:%M:%S %p" if os.name == "nt" else "%-I:%M:%S %p"
+    zone_name = value.tzname() or DASHBOARD_TIMEZONE
+    return f"{value.strftime(date_fmt)} {value.strftime(time_fmt)} {zone_name}"
+
+
+def _dashboard_timezone_label() -> str:
+    try:
+        zone = ZoneInfo(DASHBOARD_TIMEZONE)
+    except ZoneInfoNotFoundError:
+        return _escape(DASHBOARD_TIMEZONE)
+    abbreviation = datetime.now(zone).tzname()
+    if abbreviation:
+        return f"{_escape(DASHBOARD_TIMEZONE)} ({_escape(abbreviation)})"
+    return _escape(DASHBOARD_TIMEZONE)

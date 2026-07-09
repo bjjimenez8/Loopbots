@@ -104,6 +104,7 @@ dashboard:
   host: 127.0.0.1
   port: 3000
   refresh_seconds: 30
+  timezone: America/Los_Angeles
 
 grid_watch:
   enabled: true

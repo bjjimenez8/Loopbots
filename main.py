@@ -138,6 +138,7 @@ class LoopbotsApp:
                 host=dashboard_config.get("host", "127.0.0.1"),
                 port=int(dashboard_config.get("port", 3000)),
                 refresh_seconds=int(dashboard_config.get("refresh_seconds", 30)),
+                timezone=str(dashboard_config.get("timezone", config["scheduler"]["timezone"])),
             ),
             grid_snapshot_provider=self._grid_snapshot_for_dashboard,
             loop_details_provider=lambda: {
