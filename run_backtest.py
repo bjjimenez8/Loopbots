@@ -489,6 +489,7 @@ def run_backtest(
                         "take_profit_price": float(signal.take_profit_price),
                         "safety_exit_price": float(signal.safety_exit_price),
                         "entry_index": index,
+                        "loop_settings": signal.loop_settings or {},
                         "grid": _new_grid_state(signal, fee_pct),
                     }
                     mode_entries[mode_name] += 1
@@ -501,7 +502,15 @@ def run_backtest(
             grid_net_pct = active_trade["grid"]["net_return_pct"]
             trade_gross_return_pct = price_return_pct + grid_gross_pct
             trade_net_return_pct = price_return_pct - fee_pct + grid_net_pct
-            if price >= active_trade["take_profit_price"]:
+            loop_plan = (active_trade.get("loop_settings") or {}).get("loop_plan") or {}
+            total_pnl_target = float(loop_plan.get("take_profit_pct") or 0.0)
+            use_total_pnl_target = str(loop_plan.get("take_profit_mode", "price")).lower() == "total_pnl"
+            take_profit_reached = (
+                trade_net_return_pct >= total_pnl_target
+                if use_total_pnl_target and total_pnl_target > 0
+                else price >= active_trade["take_profit_price"]
+            )
+            if take_profit_reached:
                 wins += 1
                 profitable_trades += int(trade_net_return_pct > 0)
                 price_gross_return_pct += price_return_pct
@@ -768,7 +777,8 @@ def _signal_from_indicators(strategy: LoopStrategy, symbol: str, df: pd.DataFram
     )
     volume_ok = latest["volume_ratio"] >= max(strategy.config["min_volume_ratio"] - profile["volume_buffer"], 0.6)
     breakdown_ok = strategy._breakdown_ok(df)
-    loop_plan = strategy._build_loop_plan(range_window, price, atr)
+    strong_momentum = strategy._strong_momentum(latest, previous, trend_ok, price_reclaimed_fast_ema)
+    loop_plan = strategy._build_loop_plan(range_window, price, atr, strong_momentum=strong_momentum)
     loop_ready = bool(loop_plan) and strategy._loop_ready(loop_plan, price, range_position, profile)
     setup_score = strategy._setup_score(
         latest=latest,
@@ -850,6 +860,12 @@ def _sideways_signal_from_indicators(strategy: LoopStrategy, symbol: str, df: pd
     bounce_ok = latest["close"] >= latest["low"] * (1 + strategy.config["bounce_confirmation_pct"]) and latest["close"] >= previous["close"] * 0.995
     rsi_ok = float(strategy.config.get("sideways_min_rsi", 35)) <= latest["rsi"] <= float(strategy.config.get("sideways_max_rsi", 62))
     volume_ok = latest["volume_ratio"] >= float(strategy.config.get("sideways_min_volume_ratio", 0.7))
+    momentum_lookback = int(strategy.config.get("sideways_momentum_lookback", 96))
+    local_momentum_ok = (
+        len(df) > momentum_lookback
+        and latest["close"] > latest["ema_trend"]
+        and latest["close"] > df["close"].iloc[-momentum_lookback - 1]
+    )
     breakdown_ok = strategy._breakdown_ok(df)
     loop_plan = strategy._build_loop_plan(range_window, price, atr)
     profile = strategy._symbol_profile(symbol)
@@ -877,6 +893,7 @@ def _sideways_signal_from_indicators(strategy: LoopStrategy, symbol: str, df: pd
         and bounce_ok
         and rsi_ok
         and volume_ok
+        and local_momentum_ok
         and breakdown_ok
         and loop_ready
         and setup_score >= min_signal_score
@@ -1187,8 +1204,16 @@ def simulate_portfolio(
         if active_trade is not None:
             _update_grid_state(active_trade["grid"], candles.iloc[index])
             price = float(window["close"].iloc[-1])
-            if price >= active_trade["take_profit_price"] or price <= active_trade["safety_exit_price"]:
-                returns = _combined_trade_returns(active_trade, price, fee_pct)
+            returns = _combined_trade_returns(active_trade, price, fee_pct)
+            loop_plan = (active_trade.get("loop_settings") or {}).get("loop_plan") or {}
+            total_pnl_target = float(loop_plan.get("take_profit_pct") or 0.0)
+            use_total_pnl_target = str(loop_plan.get("take_profit_mode", "price")).lower() == "total_pnl"
+            take_profit_reached = (
+                returns["net_return_pct"] >= total_pnl_target
+                if use_total_pnl_target and total_pnl_target > 0
+                else price >= active_trade["take_profit_price"]
+            )
+            if take_profit_reached or price <= active_trade["safety_exit_price"]:
                 trade_profit = trade_size * (returns["net_return_pct"] / 100)
                 cash_balance += trade_size + trade_profit
                 month_key = datetime.fromtimestamp(timestamp / 1000, UTC).strftime("%Y-%m")
@@ -1208,6 +1233,7 @@ def simulate_portfolio(
                     "entry_price": signal.price,
                     "take_profit_price": float(signal.take_profit_price),
                     "safety_exit_price": float(signal.safety_exit_price),
+                    "loop_settings": signal.loop_settings or {},
                     "grid": _new_grid_state(signal, fee_pct),
                 }
                 max_concurrent = max(max_concurrent, len(active_trades))
@@ -1252,7 +1278,7 @@ def main() -> None:
     parser.add_argument("--history-exchange", default=None, help="Optional history source exchange id for deeper candle data.")
     parser.add_argument("--days", type=int, default=60, help="Number of days of candles to backtest.")
     parser.add_argument("--timeframe", default=None, help="Override candle timeframe, for example 15m, 30m, or 1h.")
-    parser.add_argument("--fee-pct", type=float, default=0.2, help="Round-trip fee assumption in percent.")
+    parser.add_argument("--fee-pct", type=float, default=0.5, help="Round-trip fee assumption in percent.")
     parser.add_argument("--preset", default="dual", choices=sorted(PRESET_OVERRIDES.keys()), help="Strategy preset to test.")
     parser.add_argument("--cache-dir", default="data/backtests", help="Folder for cached public candle data.")
     parser.add_argument("--starting-balance", type=float, default=10000.0, help="Starting cash balance for portfolio simulation.")

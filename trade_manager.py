@@ -98,6 +98,9 @@ class TradeManager:
         self._save_active_trades(active_trades)
         return trade
 
+    def current_total_net_return_pct(self, trade: dict[str, Any], current_price: float) -> float:
+        return float(self._paper_returns(trade, current_price)["total_net_return_pct"])
+
     def prune_history(self, retention_days: int) -> int:
         if retention_days <= 0 or not self.trade_history_path.exists():
             return 0

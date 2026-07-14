@@ -10,8 +10,22 @@ StrategyType = Literal["GRID", "LOOP"]
 RiskLevel = Literal["Conservative", "Balanced", "Aggressive"]
 SpeedLevel = Literal["Slow", "Medium", "Fast"]
 
-LOOP_ESTIMATED_FEE_IMPACT_PCT = 0.40
-LOOP_MIN_NET_PROFIT_PCT = 0.25
+LOOP_ESTIMATED_FEE_IMPACT_PCT = 0.50
+LOOP_MIN_GROSS_TARGET_PCT = 5.0
+LOOP_MAX_GROSS_TARGET_PCT = 20.0
+LOOP_MIN_NET_PROFIT_PCT = LOOP_MIN_GROSS_TARGET_PCT - LOOP_ESTIMATED_FEE_IMPACT_PCT
+LOOP_PRICE_ROUNDING_TOLERANCE_PCT = 0.05
+LOOP_READY_SCORE = 70
+GRID_READY_SCORE = 75
+GRID_MIN_WIN_RATE_PCT = 70.0
+GRID_MIN_AVG_RETURN_PCT = 4.0
+GRID_MAX_WORST_DRAWDOWN_PCT = 10.0
+GRID_MIN_PROOF_STARTS = 30
+GRID_MIN_REALISTIC_FEE_PCT = 0.25
+LOOP_MIN_PROOF_TRADES = 4
+LOOP_MIN_PROOF_WIN_RATE_PCT = 70.0
+LOOP_MIN_MONTHLY_PER_1K = 10.0
+LOOP_PROOF_MODEL = "total-pnl-bull-v1"
 
 
 @dataclass(frozen=True)
@@ -104,9 +118,8 @@ def _loop_opportunity(row: dict[str, Any], proof_by_symbol: dict[str, dict[str, 
     score = int(float(row.get("entry_score", 0) or 0))
     raw_reason = str(row.get("reason", ""))
     debug = _loop_debug(row, raw_reason, score)
-    status = _practical_loop_status(debug)
-    reason = _practical_reason(status, debug, strategy="LOOP")
     proof_row = proof_by_symbol.get(_proof_symbol(pair), {})
+    proof_is_current = _grid_has_current_proof(debug)
     proof = ProofStats(
         win_rate_pct=_optional_float(proof_row.get("win_rate_pct")),
         average_return_pct=_optional_float(proof_row.get("monthly_per_1k")),
@@ -114,12 +127,27 @@ def _loop_opportunity(row: dict[str, Any], proof_by_symbol: dict[str, dict[str, 
         historical_starts=_optional_int(proof_row.get("trades")),
         label=_proof_label(proof_row.get("status"), proof_row.get("trades")),
     )
+    proof_matches_current = str(proof_row.get("target_model", "")).lower() == LOOP_PROOF_MODEL
+    debug["proof_matches_current_strategy"] = proof_matches_current
+    status = _practical_loop_status(debug, proof, proof_matches_current=proof_matches_current)
+    reason = _practical_reason(status, debug, strategy="LOOP")
+    take_profit_mode = str(row.get("take_profit_mode", "price")).lower()
+    take_profit_pct = _optional_float(row.get("take_profit_pct"))
+    monitored_stop_pct = _optional_float(row.get("monitored_stop_loss_pct"))
+    take_profit_text = (
+        f"Total PnL +{take_profit_pct:g}%"
+        if take_profit_mode == "total_pnl" and take_profit_pct is not None
+        else _price_or_note(row.get("take_profit_price"), "When strategy target is reached")
+    )
+    stop_loss_text = _price_or_note(row.get("safety_exit_price"), "Stop if monitored stop triggers")
+    if monitored_stop_pct is not None:
+        stop_loss_text = f"Monitored -{monitored_stop_pct:g}% at {stop_loss_text}"
     bitsgap_fields = {
         "Pair": pair,
         "Order distance": _pct_text(row.get("order_distance_pct")),
         "Order count": _text(row.get("order_count"), "n/a"),
-        "Take profit": _price_or_note(row.get("take_profit_price"), "When strategy target is reached"),
-        "Stop loss": _price_or_note(row.get("safety_exit_price"), "Stop if stop loss triggers"),
+        "Take profit": take_profit_text,
+        "Stop loss": stop_loss_text,
         "Profit protection": "If price pushes above TP area, trail profit. If momentum weakens, exit instead of waiting.",
     }
     return Opportunity(
@@ -161,7 +189,11 @@ def _grid_opportunity(row: dict[str, Any]) -> Opportunity:
         average_return_pct=avg_return,
         worst_drawdown_pct=worst_drawdown,
         historical_starts=_optional_int(row.get("historical_starts")),
-        label="experimental" if bool(row.get("experimental")) or not has_historical_proof else "proven",
+        label=(
+            "proven"
+            if proof_is_current and not bool(row.get("experimental"))
+            else "weak data" if has_historical_proof else "experimental"
+        ),
     )
     bitsgap_fields = {
         "Pair": pair,
@@ -208,12 +240,22 @@ def _loop_debug(row: dict[str, Any], raw_reason: str, score: int) -> dict[str, A
         hard_avoid.append("missing Bitsgap settings")
     entry_price = _optional_float(row.get("price"))
     take_profit_price = _optional_float(row.get("take_profit_price"))
-    tp_distance_pct = _distance_pct(entry_price, take_profit_price)
+    take_profit_mode = str(row.get("take_profit_mode", "price")).lower()
+    configured_target_pct = _optional_float(row.get("take_profit_pct"))
+    tp_distance_pct = (
+        configured_target_pct
+        if take_profit_mode == "total_pnl" and configured_target_pct is not None
+        else _distance_pct(entry_price, take_profit_price)
+    )
     min_tp_distance_pct = LOOP_ESTIMATED_FEE_IMPACT_PCT + LOOP_MIN_NET_PROFIT_PCT
     estimated_net_profit_pct = None
     if tp_distance_pct is not None:
-        estimated_net_profit_pct = tp_distance_pct - LOOP_ESTIMATED_FEE_IMPACT_PCT
-        if tp_distance_pct < min_tp_distance_pct:
+        estimated_net_profit_pct = (
+            tp_distance_pct
+            if take_profit_mode == "total_pnl"
+            else tp_distance_pct - LOOP_ESTIMATED_FEE_IMPACT_PCT
+        )
+        if tp_distance_pct < min_tp_distance_pct - LOOP_PRICE_ROUNDING_TOLERANCE_PCT:
             hard_avoid.append("Take profit too close to entry. Not worth using.")
     return {
         "ready_blockers": blockers,
@@ -225,6 +267,9 @@ def _loop_debug(row: dict[str, Any], raw_reason: str, score: int) -> dict[str, A
         "estimated_fee_impact_pct": LOOP_ESTIMATED_FEE_IMPACT_PCT,
         "minimum_net_profit_pct": LOOP_MIN_NET_PROFIT_PCT,
         "estimated_net_profit_pct": estimated_net_profit_pct,
+        "target_tier": row.get("target_tier") or "Normal 5-10%",
+        "strong_momentum": bool(row.get("strong_momentum")),
+        "take_profit_mode": take_profit_mode,
         "range_position": _optional_float(row.get("range_position")),
         "volatility": _optional_float(row.get("volatility")),
         "liquidity_volume": _optional_float(row.get("volume_ratio")),
@@ -266,14 +311,47 @@ def _grid_debug(row: dict[str, Any], score: int) -> dict[str, Any]:
         "fee_impact": "paper fee configured in GRID tracker; not exposed per setup",
         "trend_return_pct": _optional_float(row.get("trend_return_pct")),
         "directional_efficiency": _optional_float(row.get("directional_efficiency")),
+        "historical_win_rate_pct": _optional_float(row.get("historical_win_rate_pct")),
+        "historical_avg_return_pct": _optional_float(row.get("historical_avg_return_pct")),
+        "historical_monthly_pct": _optional_float(row.get("historical_monthly_pct")),
+        "historical_worst_drawdown_pct": _optional_float(row.get("historical_worst_drawdown_pct")),
+        "historical_starts": _optional_int(row.get("historical_starts")),
+        "historical_fee_pct": _optional_float(row.get("historical_fee_pct")),
+        "historical_train_avg_return_pct": _optional_float(row.get("historical_train_avg_return_pct")),
+        "historical_test_avg_return_pct": _optional_float(row.get("historical_test_avg_return_pct")),
+        "historical_non_overlapping": bool(row.get("historical_non_overlapping")),
+        "take_profit_pct": _optional_float(row.get("take_profit_pct")),
+        "stop_loss_pct": _optional_float(row.get("stop_loss_pct")),
     }
 
 
-def _practical_loop_status(debug: dict[str, Any]) -> OpportunityStatus:
+def _practical_loop_status(
+    debug: dict[str, Any],
+    proof: ProofStats | None = None,
+    proof_matches_current: bool = False,
+) -> OpportunityStatus:
     score = float(debug.get("raw_score") or 0.0)
     if debug.get("avoid_reasons"):
         return "Avoid"
-    if score >= 35:
+    net = debug.get("estimated_net_profit_pct")
+    has_profit_room = (
+        isinstance(net, (int, float))
+        and net >= LOOP_MIN_NET_PROFIT_PCT - LOOP_PRICE_ROUNDING_TOLERANCE_PCT
+    )
+    gross_target = debug.get("tp_distance_pct")
+    target_is_valid = (
+        isinstance(gross_target, (int, float))
+        and LOOP_MIN_GROSS_TARGET_PCT - LOOP_PRICE_ROUNDING_TOLERANCE_PCT
+        <= gross_target
+        <= LOOP_MAX_GROSS_TARGET_PCT + LOOP_PRICE_ROUNDING_TOLERANCE_PCT
+    )
+    proof = proof or ProofStats()
+    has_proof = (
+        (proof.historical_starts or 0) >= LOOP_MIN_PROOF_TRADES
+        and (proof.win_rate_pct or 0.0) >= LOOP_MIN_PROOF_WIN_RATE_PCT
+        and (proof.average_return_pct or 0.0) >= LOOP_MIN_MONTHLY_PER_1K
+    )
+    if score >= LOOP_READY_SCORE and has_profit_room and target_is_valid and has_proof and proof_matches_current:
         return "Ready Now"
     return "Wait"
 
@@ -282,11 +360,35 @@ def _practical_grid_status(debug: dict[str, Any]) -> OpportunityStatus:
     score = float(debug.get("raw_score") or 0.0)
     if debug.get("avoid_reasons"):
         return "Avoid"
-    if score >= 30:
+    win_rate = float(debug.get("historical_win_rate_pct") or 0.0)
+    avg_return = float(debug.get("historical_avg_return_pct") or 0.0)
+    monthly_return = float(debug.get("historical_monthly_pct") or 0.0)
+    worst_drawdown = abs(float(debug.get("historical_worst_drawdown_pct") or 0.0))
+    take_profit_pct = float(debug.get("take_profit_pct") or 0.0)
+    stop_loss_pct = float(debug.get("stop_loss_pct") or 0.0)
+    has_proof = (
+        win_rate >= GRID_MIN_WIN_RATE_PCT
+        and avg_return >= GRID_MIN_AVG_RETURN_PCT
+        and monthly_return >= 10.0
+        and 0.0 < worst_drawdown <= GRID_MAX_WORST_DRAWDOWN_PCT
+        and _grid_has_current_proof(debug)
+    )
+    risk_settings_ok = 8.0 <= take_profit_pct <= 12.0 and 5.0 <= stop_loss_pct <= 7.0
+    if score >= GRID_READY_SCORE and has_proof and risk_settings_ok:
         return "Ready Now"
     if score < 25:
         return "Avoid"
     return "Wait"
+
+
+def _grid_has_current_proof(debug: dict[str, Any]) -> bool:
+    return bool(
+        int(debug.get("historical_starts") or 0) >= GRID_MIN_PROOF_STARTS
+        and float(debug.get("historical_fee_pct") or 0.0) >= GRID_MIN_REALISTIC_FEE_PCT
+        and float(debug.get("historical_train_avg_return_pct") or 0.0) > 0
+        and float(debug.get("historical_test_avg_return_pct") or 0.0) > 0
+        and debug.get("historical_non_overlapping") is True
+    )
 
 
 def _practical_reason(status: OpportunityStatus, debug: dict[str, Any], strategy: str) -> str:
@@ -301,6 +403,10 @@ def _practical_reason(status: OpportunityStatus, debug: dict[str, Any], strategy
         if "Take profit too close to entry. Not worth using." in reasons:
             return "Take profit too close to entry. Not worth using."
         return "Avoid: " + ", ".join(str(item) for item in reasons[:3]) + "."
+    if strategy == "LOOP" and not debug.get("proof_matches_current_strategy"):
+        return "Wait: this bull-regime Total PnL strategy has not passed its current proof test."
+    if strategy == "LOOP" and not (debug.get("wait_reasons") or debug.get("ready_blockers")):
+        return "Wait: the current bull-regime Total PnL proof is below the required win rate."
     reasons = debug.get("wait_reasons") or debug.get("ready_blockers") or ["needs a cleaner setup"]
     return "Wait: " + ", ".join(str(item) for item in reasons[:3]) + "."
 
@@ -364,7 +470,7 @@ def _take_profit_text(take_profit_pct: float, take_profit_price: float) -> str:
 def _loop_risk(score: int, proof: ProofStats) -> RiskLevel:
     starts = proof.historical_starts or 0
     win_rate = proof.win_rate_pct or 0.0
-    if starts >= 8 and win_rate >= 70 and score >= 85:
+    if proof.label == "proven" and starts >= 8 and win_rate >= 70 and score >= 85:
         return "Conservative"
     if score < 55 or starts < 5:
         return "Aggressive"
@@ -410,8 +516,10 @@ def _proof_label(status: Any, starts: Any) -> str:
     count = _optional_int(starts) or 0
     if count < 5 or "small" in raw or "experimental" in raw:
         return "experimental"
-    if "weak" in raw or "watch" in raw:
+    if "weak" in raw or "watch" in raw or "failed" in raw:
         return "weak data"
+    if "legacy" in raw:
+        return "legacy proof"
     return "proven"
 
 

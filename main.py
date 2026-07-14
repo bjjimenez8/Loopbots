@@ -85,6 +85,10 @@ class LoopbotsApp:
         self.fallback_pairs = list(config["pairs"])
         self.pairs = list(self.fallback_pairs)
         self.loop_scan_rows: list[dict[str, Any]] = []
+        self.loop_market_regime: dict[str, Any] = {
+            "risk_on": False,
+            "reason": "BTC market regime has not been checked yet",
+        }
         self.grid_scan_rows: list[dict[str, Any]] = []
         self.opportunity_market_cache: dict[str, dict[str, Any]] = {}
         morning_config = config.get("morning_brief", {})
@@ -160,6 +164,7 @@ class LoopbotsApp:
 
     async def scan_once(self) -> None:
         self.refresh_pairs()
+        self._refresh_loop_market_regime()
         logging.info("Starting scan for %d pairs", len(self.pairs))
         loop_entry_count = 0
         loop_exit_count = 0
@@ -175,7 +180,16 @@ class LoopbotsApp:
                     active_trade = self.trade_manager.update_paper_grid(symbol, candles.iloc[-1]) or active_trade
                     current_price = float(candles["close"].iloc[-1])
                     take_profit_price = float(active_trade["take_profit_price"])
-                    if current_price >= take_profit_price:
+                    loop_plan = (active_trade.get("loop_settings") or {}).get("loop_plan") or {}
+                    take_profit_mode = str(loop_plan.get("take_profit_mode", "price")).lower()
+                    total_target_pct = float(loop_plan.get("take_profit_pct") or 0.0)
+                    total_net_pct = self.trade_manager.current_total_net_return_pct(active_trade, current_price)
+                    take_profit_reached = (
+                        total_net_pct >= total_target_pct
+                        if take_profit_mode == "total_pnl" and total_target_pct > 0
+                        else current_price >= take_profit_price
+                    )
+                    if take_profit_reached:
                         take_profit_signal = Signal(
                             "HOLD",
                             symbol=symbol,
@@ -186,7 +200,7 @@ class LoopbotsApp:
                         )
                         self.trade_manager.close_trade(
                             take_profit_signal,
-                            "take profit reached",
+                            "total PnL take profit reached" if take_profit_mode == "total_pnl" else "take profit reached",
                             event="TAKE_PROFIT",
                         )
                         continue
@@ -201,7 +215,7 @@ class LoopbotsApp:
 
                 symbol_diagnostics = self._loop_diagnostics(symbol, candles)
                 loop_diagnostics.extend(symbol_diagnostics)
-                self.loop_scan_rows.append(self._loop_scan_row(symbol, symbol_diagnostics))
+                self.loop_scan_rows.append(self._apply_loop_market_gate(self._loop_scan_row(symbol, symbol_diagnostics)))
                 entry_signal = self._analyze_entry(symbol, candles)
                 if entry_signal.signal_type == "ENTER":
                     opened_trade = self.trade_manager.open_trade(entry_signal)
@@ -383,6 +397,13 @@ class LoopbotsApp:
             logging.info("Pruned %d old paper history rows", removed_count)
 
     def _analyze_entry(self, symbol: str, candles: Any) -> Signal:
+        if not bool(self.loop_market_regime.get("risk_on")):
+            return Signal(
+                "HOLD",
+                symbol=symbol,
+                price=float(candles["close"].iloc[-1]),
+                reason=str(self.loop_market_regime.get("reason") or "BTC market regime is not risk-on"),
+            )
         entry_candidates: list[Signal] = []
         for strategy_mode in self.strategies:
             if not mode_allowed(strategy_mode["mode"], candles, symbol):
@@ -427,6 +448,11 @@ class LoopbotsApp:
             "entry_zone_high": best.get("entry_zone_high", ""),
             "take_profit_price": best.get("take_profit_price", ""),
             "safety_exit_price": best.get("safety_exit_price", ""),
+            "target_tier": best.get("target_tier", ""),
+            "strong_momentum": best.get("strong_momentum", False),
+            "take_profit_mode": best.get("take_profit_mode", ""),
+            "take_profit_pct": best.get("take_profit_pct", ""),
+            "monitored_stop_loss_pct": best.get("monitored_stop_loss_pct", ""),
         }
 
     def _sorted_loop_scan_rows(self) -> list[dict[str, Any]]:
@@ -492,7 +518,7 @@ class LoopbotsApp:
         snapshot = opportunity_snapshot(
             loop_rows=loop_rows,
             grid_rows=grid_stats.get("scanned", []),
-            loop_proof_rows=[],
+            loop_proof_rows=self._loop_research_proof(),
             strategy_filter=strategy_filter,
             status_filter=self._query_value(query, "status", "all"),
             risk_filter="all",
@@ -502,7 +528,7 @@ class LoopbotsApp:
             snapshot = opportunity_snapshot(
                 loop_rows=loop_rows,
                 grid_rows=grid_stats.get("scanned", []),
-                loop_proof_rows=[],
+                loop_proof_rows=self._loop_research_proof(),
                 strategy_filter=strategy_filter,
                 status_filter=self._query_value(query, "status", "all"),
                 risk_filter="all",
@@ -520,19 +546,66 @@ class LoopbotsApp:
     def _dashboard_scan_now(self) -> None:
         try:
             self.refresh_pairs()
+            self._refresh_loop_market_regime()
             self.loop_scan_rows = []
             for symbol in self.pairs:
                 try:
                     candles = self.market_data.fetch_ohlcv(symbol)
                     self._cache_opportunity_market_snapshot(symbol, candles, self.market_data.timeframe)
                     diagnostics = self._loop_diagnostics(symbol, candles)
-                    self.loop_scan_rows.append(self._loop_scan_row(symbol, diagnostics))
+                    self.loop_scan_rows.append(self._apply_loop_market_gate(self._loop_scan_row(symbol, diagnostics)))
                 except Exception:
                     logging.exception("Dashboard scan failed for LOOP %s", symbol)
             self._refresh_grid_scan_rows()
             logging.info("Dashboard Scan Kraken Now completed")
         except Exception:
             logging.exception("Dashboard Scan Kraken Now failed")
+
+    def _refresh_loop_market_regime(self) -> None:
+        try:
+            candles = self.market_data.fetch_ohlcv_timeframe("BTC/USDT", "1h", 720)
+            close = candles["close"].astype(float)
+            if len(close) < 600:
+                raise RuntimeError(f"only {len(close)} BTC hourly candles available")
+            ema_50 = close.ewm(span=50, adjust=False).mean()
+            ema_200 = close.ewm(span=200, adjust=False).mean()
+            return_30d_pct = ((float(close.iloc[-1]) / float(close.iloc[0])) - 1) * 100
+            ema_200_rising = float(ema_200.iloc[-1]) > float(ema_200.iloc[-72])
+            risk_on = bool(
+                float(close.iloc[-1]) > float(ema_50.iloc[-1]) > float(ema_200.iloc[-1])
+                and return_30d_pct > 0
+                and ema_200_rising
+            )
+            reason = (
+                "BTC 30-day regime is risk-on"
+                if risk_on
+                else "BTC 30-day regime is not risk-on; LOOP entries are paused"
+            )
+            self.loop_market_regime = {
+                "risk_on": risk_on,
+                "reason": reason,
+                "return_30d_pct": round(return_30d_pct, 2),
+                "checked_at": datetime.now(UTC).isoformat(),
+            }
+            logging.info("%s (30-day return %.2f%%)", reason, return_30d_pct)
+        except Exception as exc:
+            self.loop_market_regime = {
+                "risk_on": False,
+                "reason": "BTC market regime unavailable; LOOP entries are paused",
+                "error": exc.__class__.__name__,
+                "checked_at": datetime.now(UTC).isoformat(),
+            }
+            logging.exception("Failed to refresh BTC LOOP market regime")
+
+    def _apply_loop_market_gate(self, row: dict[str, Any]) -> dict[str, Any]:
+        if bool(self.loop_market_regime.get("risk_on")):
+            return row
+        return {
+            **row,
+            "status": "Waiting",
+            "entry_score": min(int(row.get("entry_score", 0) or 0), 69),
+            "reason": str(self.loop_market_regime.get("reason") or "BTC market regime is not risk-on"),
+        }
 
     def _auto_track_opportunity_paper(self) -> None:
         considered = 0
@@ -558,16 +631,18 @@ class LoopbotsApp:
 
     @staticmethod
     def _is_customer_ready_opportunity(item: dict[str, Any]) -> bool:
+        if str(item.get("status", "")) != "Ready Now":
+            return False
         fields = item.get("bitsgap_fields", {})
         if not isinstance(fields, dict):
             return False
         strategy = str(item.get("strategy", "")).upper()
         if strategy == "GRID":
             required = ["Low price", "High price", "Grid levels", "Grid step", "Take profit", "Stop loss"]
-            minimum_score = 30
+            minimum_score = 75
         elif strategy == "LOOP":
             required = ["Order distance", "Order count", "Take profit", "Stop loss"]
-            minimum_score = 35
+            minimum_score = 70
         else:
             return False
         for key in required:
@@ -726,16 +801,23 @@ class LoopbotsApp:
     @staticmethod
     def _loop_research_proof() -> list[dict[str, Any]]:
         return [
-            {"symbol": "DOGE/USDT", "setup": "1.2% LOOP", "trades": 12, "win_rate_pct": 75.00, "monthly_per_1k": 26.14, "status": "Proven"},
-            {"symbol": "SOL/USDT", "setup": "2.0% LOOP", "trades": 4, "win_rate_pct": 100.00, "monthly_per_1k": 24.73, "status": "Small sample"},
-            {"symbol": "LTC/USDT", "setup": "1.0% LOOP", "trades": 9, "win_rate_pct": 77.78, "monthly_per_1k": 12.07, "status": "Proven"},
-            {"symbol": "ALGO/USDT", "setup": "2.0% LOOP", "trades": 9, "win_rate_pct": 55.56, "monthly_per_1k": 6.93, "status": "Watch"},
-            {"symbol": "ETH/USDT", "setup": "2.0% LOOP", "trades": 6, "win_rate_pct": 50.00, "monthly_per_1k": 0.50, "status": "Weak edge"},
+            {"symbol": "DOGE/USDT", "setup": "1.2% LOOP, 5-20% target", "trades": 11, "win_rate_pct": 54.55, "monthly_per_1k": 19.00, "status": "Failed current proof", "target_model": "5-20"},
+            {"symbol": "SOL/USDT", "setup": "1.2% LOOP, 5-20% target", "trades": 8, "win_rate_pct": 50.00, "monthly_per_1k": 6.20, "status": "Failed current proof", "target_model": "5-20"},
+            {"symbol": "LTC/USDT", "setup": "1.5% LOOP, 5-20% target", "trades": 1, "win_rate_pct": 0.00, "monthly_per_1k": -10.80, "status": "Small failed sample", "target_model": "5-20"},
+            {"symbol": "ALGO/USDT", "setup": "2.0% LOOP, old small target", "trades": 9, "win_rate_pct": 55.56, "monthly_per_1k": 6.93, "status": "Legacy proof"},
+            {"symbol": "ETH/USDT", "setup": "2.0% LOOP, old small target", "trades": 6, "win_rate_pct": 50.00, "monthly_per_1k": 0.50, "status": "Legacy proof"},
         ]
 
     def _grid_research_proof(self) -> list[dict[str, Any]]:
         rows = []
         for profile in self.grid_watch.config.hot_discovery.profiles:
+            proof_current = bool(
+                profile.historical_starts >= 30
+                and profile.historical_fee_pct >= 0.25
+                and profile.historical_train_avg_return_pct > 0
+                and profile.historical_test_avg_return_pct > 0
+                and profile.historical_non_overlapping
+            )
             rows.append(
                 {
                     "symbol": f"{profile.base_asset}/{'|'.join(profile.allowed_quotes)}",
@@ -744,7 +826,12 @@ class LoopbotsApp:
                     "monthly_pct": profile.historical_monthly_pct,
                     "worst_drawdown_pct": profile.historical_worst_drawdown_pct,
                     "alerts_per_month": profile.historical_alerts_per_month,
-                    "status": "Experimental" if "experimental" in profile.preset_name.lower() else "Proven",
+                    "starts": profile.historical_starts,
+                    "fee_pct": profile.historical_fee_pct,
+                    "train_avg_return_pct": profile.historical_train_avg_return_pct,
+                    "test_avg_return_pct": profile.historical_test_avg_return_pct,
+                    "non_overlapping": profile.historical_non_overlapping,
+                    "status": "Proven" if proof_current else "Needs stronger proof",
                     "preset_name": profile.preset_name,
                 }
             )
@@ -805,7 +892,8 @@ class LoopbotsApp:
         )
         volume_ok = latest["volume_ratio"] >= max(strategy.config["min_volume_ratio"] - profile["volume_buffer"], 0.6)
         breakdown_ok = strategy._breakdown_ok(df)
-        loop_plan = strategy._build_loop_plan(range_window, price, atr)
+        strong_momentum = strategy._strong_momentum(latest, previous, trend_ok, price_reclaimed_fast_ema)
+        loop_plan = strategy._build_loop_plan(range_window, price, atr, strong_momentum=strong_momentum)
         loop_ready = bool(loop_plan) and strategy._loop_ready(loop_plan, price, range_position, profile)
         score = strategy._setup_score(
             latest=latest,
@@ -859,6 +947,11 @@ class LoopbotsApp:
             "entry_zone_high": loop_plan.get("high_price", ""),
             "take_profit_price": loop_plan.get("take_profit_price", ""),
             "safety_exit_price": loop_plan.get("safety_exit_price", ""),
+            "target_tier": loop_plan.get("target_tier", ""),
+            "strong_momentum": loop_plan.get("strong_momentum", False),
+            "take_profit_mode": loop_plan.get("take_profit_mode", ""),
+            "take_profit_pct": loop_plan.get("take_profit_pct", ""),
+            "monitored_stop_loss_pct": loop_plan.get("monitored_stop_loss_pct", ""),
         }
 
     @staticmethod
@@ -873,6 +966,8 @@ class LoopbotsApp:
         strategy_modes = config.get("strategy_modes") or self._default_strategy_modes()
         strategies: list[dict[str, Any]] = []
         for mode in strategy_modes:
+            if mode.get("enabled") is False:
+                continue
             strategy_config = deepcopy(config["strategy"])
             strategy_config.update(mode.get("strategy_overrides", {}))
             loop_settings = deepcopy(config["loop_settings"])
@@ -933,6 +1028,17 @@ async def main() -> None:
     config = load_config()
     setup_logging(config["storage"]["log_file"])
     app = LoopbotsApp(config)
+    if app.strategies:
+        strategy = app.strategies[0]["strategy"]
+        logging.info(
+            "LOOP targets loaded: normal %.1f-%.1f%%, momentum %.1f-%.1f%%, monitored stop %.1f-%.1f%%",
+            strategy.normal_take_profit_min_pct,
+            strategy.normal_take_profit_max_pct,
+            strategy.momentum_take_profit_min_pct,
+            strategy.momentum_take_profit_max_pct,
+            strategy.monitored_stop_loss_min_pct,
+            strategy.monitored_stop_loss_max_pct,
+        )
 
     scheduler = AsyncIOScheduler(timezone=config["scheduler"]["timezone"])
     scheduler.add_job(

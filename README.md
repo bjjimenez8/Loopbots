@@ -75,16 +75,18 @@ GRID bots do not send separate exit alerts. Bitsgap's GRID stop loss and take pr
 
 GRID alerts are also paper-tracked internally. After a `GRID BOT ENTRY`, Loopbots watches future GRID candles and silently records a paper `GRID_TAKE_PROFIT` or `GRID_STOP_LOSS` when the alert's TP or SL price is touched. These paper closes are for stats only and do not send Telegram exit alerts.
 
-Current Hot GRID profiles:
+Current GRID research profiles are watch candidates, not proven strategies:
 
-| Coin | Quote | Range | Levels | Historical WR | Est. monthly | Filter |
-| --- | --- | ---: | ---: | ---: | ---: | --- |
-| `PEPE` | `USD` | -8% / +50% | 10 | 100% | +27.85% | strict sideways |
-| `JTO` | `USD` | -5% / +50% | 10 | 90.91% | +22.42% | sideways |
-| `INJ` | `USD` | -8% / +50% | 10 | 63.16% | +9.79% | sideways |
-| `XCN` | `USD` | -8% / +35% | 10 | 72.22% | +14.99% | sideways |
-| `ETH` | `USDC` | -5% / +50% | 10 | 63.33% | +9.57% | strict sideways |
-| `IDEX` | `USD` | -10% / +50% | 10 | 100% | +29.66% | experimental sideways |
+| Coin | Quote | Range | Levels | Legacy WR | Proof status | Filter |
+| --- | --- | ---: | ---: | ---: | --- | --- |
+| `PEPE` | `USD` | -8% / +50% | 10 | 83.33% | Needs stronger proof | strict sideways |
+| `JTO` | `USD` | -14% / +50% | 20 | 75.00% | Needs stronger proof | sideways |
+| `INJ` | `USD` | -8% / +50% | 10 | 63.16% | Needs stronger proof | sideways |
+| `XCN` | `USD` | -8% / +35% | 10 | 72.22% | Needs stronger proof | sideways |
+| `ETH` | `USDC` | -5% / +50% | 10 | 63.33% | Needs stronger proof | strict sideways |
+| `IDEX` | `USD` | -10% / +50% | 10 | 100% | Experimental small sample | sideways |
+
+The July 2026 proof audit used 730 days of hourly history, non-overlapping runs, a train/test split, and a 0.25% per-order Kraken maker-fee assumption. No GRID or LOOP setup met the full Ready Now standard. The old PEPE/JTO studies used only 12 starts and a lower fee assumption, so they remain visible for research but cannot become Ready Now.
 
 The scanner can also auto-add new Kraken `USD`/`USDC` coins as `Auto Hot GRID` candidates when they pass stricter live filters. Auto-added coins use `-8% / +35%`, `10` levels, `+8%` take profit, `-5%` stop loss, and strict-sideways filtering. These are opportunity alerts, not per-coin proven profiles yet.
 

@@ -18,9 +18,9 @@ The bot does not auto-trade. It scans Kraken, auto-discovers researched hot `USD
 - Uses cooldown tracking after an alert so it does not spam the same setup.
 - Sends cooldown-limited `BOT STATUS` reports when no setups fire.
 
-## Live Watchlist
+## Research Watchlist
 
-These are the current Hot GRID profiles in `config.yaml`:
+These are research candidates in `config.yaml`. None currently meets the strengthened proof standard.
 
 | Coin | Quote | Range | Levels | Historical win rate | Est. monthly | Worst drawdown | Filter |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | --- |
@@ -31,7 +31,7 @@ These are the current Hot GRID profiles in `config.yaml`:
 | `ETH` | `USDC` | -5% / +50% | 10 | 63.33% | +9.57% | -9.62% | strict sideways |
 | `IDEX` | `USD` | -10% / +50% | 10 | 100% | +29.66% | -5.58% | experimental sideways |
 
-These are not random coins. They were added because the filtered backtest looked better than the other Kraken pairs tested. Coins that did not hold up were left out.
+The July 2026 audit supersedes the older headline statistics above. It tested 13 liquid coins over 730 days with non-overlapping runs, a year-one/year-two split, and a 0.25% per-order fee assumption. No setup delivered both serious returns and robust out-of-sample proof. BTC remained slightly positive in both years but with too little return; BNB and LTC failed the untouched year.
 
 `IDEX/USD` is marked experimental because the backtest result was strong but only had `3` valid historical starts. It is watched and paper-tracked automatically, but should not be sized like a proven setup until live paper and real Bitsgap results confirm it.
 
@@ -81,12 +81,12 @@ This feature is built to only alert on setups that were historically profitable 
 
 Honest answer: it is not guaranteed profit.
 
-What is proven so far:
+What is supported so far:
 
-- The live Hot GRID profiles are based on profitable filtered backtests.
+- The scanner and backtester correctly reject many unsuitable setups.
 - The filter avoids many bad sideways-looking setups.
 - The alerts are selective, so it may send zero alerts in bad conditions.
-- The best current historical setup is `PEPE/USD`.
+- No coin currently satisfies the full Ready Now proof gate.
 
 What is not proven yet:
 
@@ -120,7 +120,7 @@ python run_grid_backtest.py
 Example Kraken optimizer command:
 
 ```powershell
-python run_grid_backtest.py --exchange kraken --history-exchange coinbase --days 180 --timeframe 1h --investment 5000 --fee-pct 0.1 --symbols PEPE/USD,JTO/USD,INJ/USD,XCN/USD,ETH/USDC --optimize-grid --hold-days 10 --step-days 2 --launch-filter sideways --take-profit-pct 8 --stop-loss-pct 5 --optimizer-lower-pcts 5,8,14 --optimizer-upper-pcts 17,35,50 --optimizer-levels 10,20 --min-rolling-starts 10 --min-win-rate-pct 50 --min-avg-return-pct 0 --min-p10-return-pct -8 --min-avg-monthly-pct 5 --top-setups-per-symbol 3
+python run_grid_backtest.py --exchange kraken --history-exchange okx --days 730 --timeframe 1h --investment 100 --fee-pct 0.25 --symbols BTC/USDT,ETH/USDT,SOL/USDT,DOGE/USDT,LINK/USDT,LTC/USDT,ADA/USDT,ALGO/USDT,AVAX/USDT,BNB/USDT,XRP/USDT,TON/USDT,XAUT/USDT --optimize-grid --hold-days 10 --step-days 10 --launch-filter strict-sideways --take-profit-pct 8 --stop-loss-pct 5 --min-rolling-starts 15 --min-win-rate-pct 60 --min-avg-return-pct 3 --min-p10-return-pct -7 --min-avg-monthly-pct 6
 ```
 
 The backtester is useful for research and ranking, but Bitsgap's exact internal execution is not perfectly replicated.

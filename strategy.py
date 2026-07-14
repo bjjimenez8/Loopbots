@@ -28,6 +28,16 @@ class LoopStrategy:
         self.order_distance_pct = float(loop_settings.get("order_distance_pct", 1.5))
         self.order_count = int(loop_settings.get("order_count", 10))
         self.assumed_round_trip_fee_pct = float(loop_settings.get("assumed_round_trip_fee_pct", 0.2))
+        self.take_profit_mode = str(loop_settings.get("take_profit_mode", "price")).lower()
+        self.normal_take_profit_min_pct = float(loop_settings.get("normal_take_profit_min_pct", 5.0))
+        self.normal_take_profit_max_pct = float(loop_settings.get("normal_take_profit_max_pct", 10.0))
+        self.momentum_take_profit_min_pct = float(loop_settings.get("momentum_take_profit_min_pct", 15.0))
+        self.momentum_take_profit_max_pct = float(loop_settings.get("momentum_take_profit_max_pct", 20.0))
+        self.monitored_stop_loss_min_pct = float(loop_settings.get("monitored_stop_loss_min_pct", 5.0))
+        self.monitored_stop_loss_max_pct = float(loop_settings.get("monitored_stop_loss_max_pct", 6.0))
+        self.momentum_min_volume_ratio = float(loop_settings.get("momentum_min_volume_ratio", 1.25))
+        self.momentum_min_rsi = float(loop_settings.get("momentum_min_rsi", 52.0))
+        self.momentum_max_rsi = float(loop_settings.get("momentum_max_rsi", 68.0))
 
     def analyze_entry(self, symbol: str, candles: pd.DataFrame) -> Signal:
         if self.config.get("entry_style") == "sideways_accumulation":
@@ -69,7 +79,8 @@ class LoopStrategy:
         )
         volume_ok = latest["volume_ratio"] >= max(self.config["min_volume_ratio"] - profile["volume_buffer"], 0.6)
         breakdown_ok = self._breakdown_ok(df)
-        loop_plan = self._build_loop_plan(range_window, price, atr)
+        strong_momentum = self._strong_momentum(latest, previous, trend_ok, price_reclaimed_fast_ema)
+        loop_plan = self._build_loop_plan(range_window, price, atr, strong_momentum=strong_momentum)
         loop_ready = bool(loop_plan) and self._loop_ready(loop_plan, price, range_position, profile)
         setup_score = self._setup_score(
             latest=latest,
@@ -154,8 +165,14 @@ class LoopStrategy:
         bounce_ok = latest["close"] >= latest["low"] * (1 + self.config["bounce_confirmation_pct"]) and latest["close"] >= previous["close"] * 0.995
         rsi_ok = float(self.config.get("sideways_min_rsi", 35)) <= latest["rsi"] <= float(self.config.get("sideways_max_rsi", 62))
         volume_ok = latest["volume_ratio"] >= float(self.config.get("sideways_min_volume_ratio", 0.7))
+        momentum_lookback = int(self.config.get("sideways_momentum_lookback", 96))
+        local_momentum_ok = (
+            len(df) > momentum_lookback
+            and latest["close"] > latest["ema_trend"]
+            and latest["close"] > df["close"].iloc[-momentum_lookback - 1]
+        )
         breakdown_ok = self._breakdown_ok(df)
-        loop_plan = self._build_loop_plan(range_window, price, atr)
+        loop_plan = self._build_loop_plan(range_window, price, atr, strong_momentum=False)
         profile = self._symbol_profile(symbol)
         loop_ready = bool(loop_plan) and self._loop_ready(loop_plan, price, range_position, profile)
         setup_score = self._sideways_setup_score(
@@ -181,6 +198,7 @@ class LoopStrategy:
             and bounce_ok
             and rsi_ok
             and volume_ok
+            and local_momentum_ok
             and breakdown_ok
             and loop_ready
             and setup_score >= min_signal_score
@@ -220,12 +238,18 @@ class LoopStrategy:
 
     @property
     def _minimum_candles(self) -> int:
-        return max(
+        minimum = max(
             self.config["ema_trend"],
             self.config["rsi_period"],
             self.config["atr_period"],
             self.config["volume_sma_period"],
         ) + self.config["pullback_lookback"] + 6
+        if self.config.get("entry_style") == "sideways_accumulation":
+            minimum = max(
+                minimum,
+                self.config["ema_trend"] + int(self.config.get("sideways_momentum_lookback", 96)) + 6,
+            )
+        return minimum
 
     @property
     def _range_lookback(self) -> int:
@@ -242,7 +266,13 @@ class LoopStrategy:
         df["volume_ratio"] = df["volume"] / df["volume_sma"]
         return df.dropna().reset_index(drop=True)
 
-    def _build_loop_plan(self, range_window: pd.DataFrame, price: float, atr: float) -> dict | None:
+    def _build_loop_plan(
+        self,
+        range_window: pd.DataFrame,
+        price: float,
+        atr: float,
+        strong_momentum: bool = False,
+    ) -> dict | None:
         range_low = float(range_window["low"].min())
         range_high = float(range_window["high"].max())
 
@@ -250,22 +280,44 @@ class LoopStrategy:
             return None
 
         raw_range_width_pct = ((range_high - range_low) / price) * 100
-        order_distance_pct = self.order_distance_pct
         order_count = self.order_count
 
-        if order_distance_pct < 0.5 or order_count < 10 or order_count > 40 or order_count % 2 != 0:
+        if self.order_distance_pct < 0.5 or order_count < 10 or order_count > 40 or order_count % 2 != 0:
             return None
 
         precision = self._price_precision(price)
         half_order_count = order_count // 2
+        atr_pct = (atr / price) * 100
+        if strong_momentum:
+            take_profit_pct = min(
+                max(self.momentum_take_profit_min_pct, atr_pct * 4.0),
+                self.momentum_take_profit_max_pct,
+            )
+            target_tier = f"Momentum {self.momentum_take_profit_min_pct:g}-{self.momentum_take_profit_max_pct:g}%"
+        else:
+            take_profit_pct = min(
+                max(self.normal_take_profit_min_pct, atr_pct * 2.5),
+                self.normal_take_profit_max_pct,
+            )
+            target_tier = (
+                f"Standard {self.normal_take_profit_min_pct:g}%"
+                if self.normal_take_profit_min_pct == self.normal_take_profit_max_pct
+                else f"Normal {self.normal_take_profit_min_pct:g}-{self.normal_take_profit_max_pct:g}%"
+            )
+
+        # The recommended Bitsgap range must be wide enough to contain the target.
+        order_distance_pct = max(self.order_distance_pct, take_profit_pct / half_order_count)
+        order_distance_pct = round(order_distance_pct, 2)
         half_range_pct = order_distance_pct * half_order_count
         estimated_low_price = round(price * (1 - (half_range_pct / 100)), precision)
         estimated_high_price = round(price * (1 + (half_range_pct / 100)), precision)
         if estimated_low_price <= 0 or estimated_high_price <= price:
             return None
 
-        safety_exit_pct = max(order_distance_pct, (atr / price) * 100 * 0.85)
-        take_profit_pct = max(order_distance_pct * 1.15, (atr / price) * 100 * 1.05)
+        safety_exit_pct = min(
+            max(self.monitored_stop_loss_min_pct, atr_pct * 1.5),
+            self.monitored_stop_loss_max_pct,
+        )
         safety_exit_price = round(price * (1 - (safety_exit_pct / 100)), precision)
         take_profit_price = round(price * (1 + (take_profit_pct / 100)), precision)
         reward_to_risk = (take_profit_price - price) / (price - safety_exit_price) if price > safety_exit_price else 0.0
@@ -275,6 +327,12 @@ class LoopStrategy:
 
         return {
             "preset_name": self.preset_name,
+            "take_profit_mode": self.take_profit_mode,
+            "target_tier": target_tier,
+            "strong_momentum": strong_momentum,
+            "take_profit_pct": round(take_profit_pct, 2),
+            "monitored_stop_loss_pct": round(safety_exit_pct, 2),
+            "native_stop_loss_supported": False,
             "safety_exit_price": safety_exit_price,
             "take_profit_price": take_profit_price,
             "order_distance_pct": order_distance_pct,
@@ -288,6 +346,21 @@ class LoopStrategy:
             "fee_buffer_pct": round(order_distance_pct - self.assumed_round_trip_fee_pct, 2),
             "reward_to_risk": round(reward_to_risk, 2),
         }
+
+    def _strong_momentum(
+        self,
+        latest: pd.Series,
+        previous: pd.Series,
+        trend_ok: bool,
+        price_reclaimed_fast_ema: bool,
+    ) -> bool:
+        return bool(
+            trend_ok
+            and price_reclaimed_fast_ema
+            and latest["close"] > previous["close"]
+            and float(latest["volume_ratio"]) >= self.momentum_min_volume_ratio
+            and self.momentum_min_rsi <= float(latest["rsi"]) <= self.momentum_max_rsi
+        )
 
     @staticmethod
     def _setup_score(

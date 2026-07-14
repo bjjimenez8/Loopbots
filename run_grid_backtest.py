@@ -768,30 +768,27 @@ def run_grid_research(args: argparse.Namespace) -> list[dict[str, Any]]:
                 and float(row.get("range_break_pct", 0.0)) <= args.max_result_range_break_pct
             )
         ]
-    rows.sort(
-        key=(
-            lambda row: (
-                row.get("status") != "ok",
-                -float(row.get("optimizer_score", 0.0)),
-                -float(row.get("win_rate_pct", 0.0)),
-                -float(row.get("avg_monthly_pct", 0.0)),
-            )
-            if args.optimize_grid
-            else
-            lambda row: (
-                row.get("status") != "ok",
-                -float(row.get("avg_monthly_pct", 0.0)),
-                -float(row.get("p10_return_pct", 0.0)),
-            )
-            if args.rolling
-            else (
-                row.get("status") != "ok",
-                -float(row.get("grid_score", 0.0)),
-                -float(row.get("total_pnl_pct", 0.0)),
-                float(row.get("max_drawdown_pct", 0.0)),
-            )
+    if args.optimize_grid:
+        sort_key = lambda row: (
+            row.get("status") != "ok",
+            -float(row.get("optimizer_score", 0.0)),
+            -float(row.get("win_rate_pct", 0.0)),
+            -float(row.get("avg_monthly_pct", 0.0)),
         )
-    )
+    elif args.rolling:
+        sort_key = lambda row: (
+            row.get("status") != "ok",
+            -float(row.get("avg_monthly_pct", 0.0)),
+            -float(row.get("p10_return_pct", 0.0)),
+        )
+    else:
+        sort_key = lambda row: (
+            row.get("status") != "ok",
+            -float(row.get("grid_score", 0.0)),
+            -float(row.get("total_pnl_pct", 0.0)),
+            float(row.get("max_drawdown_pct", 0.0)),
+        )
+    rows.sort(key=sort_key)
     return rows
 
 
@@ -874,7 +871,7 @@ def main() -> None:
     parser.add_argument("--days", type=int, default=120, help="Number of days to backtest.")
     parser.add_argument("--timeframe", default="1h", help="Candle timeframe, such as 15m, 30m, or 1h.")
     parser.add_argument("--investment", type=float, default=1000.0, help="Investment amount per simulated grid bot.")
-    parser.add_argument("--fee-pct", type=float, default=0.1, help="Fee estimate per filled order in percent.")
+    parser.add_argument("--fee-pct", type=float, default=0.25, help="Fee estimate per filled order in percent.")
     parser.add_argument("--cache-dir", default="data/backtests", help="Folder for cached candle data.")
     parser.add_argument("--quote-asset", default="USDT", help="Quote asset for GRID smart scan.")
     parser.add_argument("--symbols", default="", help="Comma-separated symbols to test, such as BTC/USDT,ETH/USDT.")

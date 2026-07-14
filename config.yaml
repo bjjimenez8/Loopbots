@@ -3,7 +3,7 @@ exchange:
   enable_rate_limit: true
   sandbox: false
   timeframe: 15m
-  candle_limit: 120
+  candle_limit: 240
 
 telegram:
   bot_token: "PUT_TELEGRAM_BOT_TOKEN_HERE"
@@ -24,7 +24,7 @@ pair_discovery:
   max_pairs: 20
   hot_discovery:
     enabled: true
-    auto_add_new: true
+    auto_add_new: false
     min_quote_volume_usdt: 40000
     min_volatility_pct: 1.8
     max_volatility_pct: 22.0
@@ -111,7 +111,8 @@ grid_watch:
   exchange_id: kraken
   timeframe: 1h
   candle_limit: 360
-  investment_usdt: 5000
+  investment_usdt: 100
+  paper_fee_pct: 0.25
   filter_lookback_days: 14
   cooldown_days: 14
   state_file: data/grid_watch_state.json
@@ -131,7 +132,7 @@ grid_watch:
     max_volatility_pct: 80
     max_abs_change_pct: 35
     max_pairs: 12
-    auto_add_new: true
+    auto_add_new: false
     auto_min_quote_volume: 500000
     auto_min_volatility_pct: 3
     auto_max_volatility_pct: 35
@@ -174,29 +175,39 @@ grid_watch:
         take_profit_pct: 8
         stop_loss_pct: 5
         launch_filter: strict-sideways
-        historical_win_rate_pct: 100
-        historical_avg_return_pct: 6.5
-        historical_monthly_pct: 27.85
-        historical_avg_drawdown_pct: -4.91
-        historical_worst_drawdown_pct: -6.64
-        historical_alerts_per_month: 2
+        historical_win_rate_pct: 83.33
+        historical_avg_return_pct: 5.96
+        historical_monthly_pct: 17.88
+        historical_avg_drawdown_pct: -4.56
+        historical_worst_drawdown_pct: -7.35
+        historical_alerts_per_month: 2.88
+        historical_starts: 12
+        historical_fee_pct: 0.1
+        historical_train_avg_return_pct: 0
+        historical_test_avg_return_pct: 0
+        historical_non_overlapping: false
         score: 96
       - base_asset: JTO
         allowed_quotes:
           - USD
         preset_name: Hot JTO GRID
-        lower_pct: 5
+        lower_pct: 14
         upper_pct: 50
-        levels: 10
+        levels: 20
         take_profit_pct: 8
         stop_loss_pct: 5
         launch_filter: sideways
-        historical_win_rate_pct: 90.91
-        historical_avg_return_pct: 7.47
-        historical_monthly_pct: 22.42
-        historical_avg_drawdown_pct: -3.83
-        historical_worst_drawdown_pct: -7.07
-        historical_alerts_per_month: 2.2
+        historical_win_rate_pct: 75
+        historical_avg_return_pct: 5.04
+        historical_monthly_pct: 15.11
+        historical_avg_drawdown_pct: -5.36
+        historical_worst_drawdown_pct: -7.87
+        historical_alerts_per_month: 2.88
+        historical_starts: 12
+        historical_fee_pct: 0.1
+        historical_train_avg_return_pct: 0
+        historical_test_avg_return_pct: 0
+        historical_non_overlapping: false
         score: 95
       - base_asset: INJ
         allowed_quotes:
@@ -282,6 +293,7 @@ pairs:
   - ALGO/USDT
 
 strategy:
+  entry_style: sideways_accumulation
   ema_fast: 9
   ema_slow: 21
   ema_trend: 50
@@ -300,7 +312,18 @@ strategy:
   max_recent_drop_pct: 8.0
   take_profit_atr_multiple: 1.4
   safety_exit_atr_multiple: 0.9
-  max_active_minutes: 180
+  max_active_minutes: 10080
+  sideways_min_range_width_pct: 6
+  sideways_max_range_width_pct: 24
+  sideways_max_ema_slope_pct: 4
+  sideways_min_range_position: 0.18
+  sideways_max_range_position: 0.45
+  sideways_min_support_touches: 2
+  sideways_min_resistance_touches: 1
+  sideways_min_rsi: 35
+  sideways_max_rsi: 62
+  sideways_min_volume_ratio: 0.7
+  sideways_momentum_lookback: 96
 
 optimizer:
   enabled: true
@@ -349,11 +372,11 @@ strategy_modes:
       pullback_max_pct: 0.035
       bounce_confirmation_pct: 0.0015
       min_volume_ratio: 0.85
-      max_active_minutes: 180
+      max_active_minutes: 10080
     loop_settings:
       preset_name: Optimized DOGE
-      method_name: Trend pullback
-      order_distance_pct: 1.2
+      method_name: Sideways range
+      order_distance_pct: 1.0
       order_count: 10
   - name: doge_wide_quality
     market_type: any
@@ -364,11 +387,11 @@ strategy_modes:
       pullback_max_pct: 0.035
       bounce_confirmation_pct: 0.0015
       min_volume_ratio: 0.85
-      max_active_minutes: 180
+      max_active_minutes: 10080
     loop_settings:
       preset_name: DOGE Wide Quality
-      method_name: Trend pullback
-      order_distance_pct: 1.5
+      method_name: Sideways range
+      order_distance_pct: 1.0
       order_count: 10
   - name: sol_optimized
     market_type: any
@@ -379,11 +402,11 @@ strategy_modes:
       pullback_max_pct: 0.035
       bounce_confirmation_pct: 0.0015
       min_volume_ratio: 0.85
-      max_active_minutes: 180
+      max_active_minutes: 10080
     loop_settings:
       preset_name: Optimized SOL
-      method_name: Trend pullback
-      order_distance_pct: 2.0
+      method_name: Sideways range
+      order_distance_pct: 1.0
       order_count: 10
   - name: sol_balanced_more_trades
     market_type: any
@@ -394,11 +417,11 @@ strategy_modes:
       pullback_max_pct: 0.035
       bounce_confirmation_pct: 0.0015
       min_volume_ratio: 0.85
-      max_active_minutes: 180
+      max_active_minutes: 10080
     loop_settings:
       preset_name: SOL Balanced
-      method_name: Trend pullback
-      order_distance_pct: 1.5
+      method_name: Sideways range
+      order_distance_pct: 1.0
       order_count: 10
   - name: eth_optimized
     market_type: any
@@ -409,11 +432,11 @@ strategy_modes:
       pullback_max_pct: 0.035
       bounce_confirmation_pct: 0.0015
       min_volume_ratio: 0.85
-      max_active_minutes: 180
+      max_active_minutes: 10080
     loop_settings:
       preset_name: Optimized ETH
-      method_name: Trend pullback
-      order_distance_pct: 2.0
+      method_name: Sideways range
+      order_distance_pct: 1.0
       order_count: 10
   - name: ltc_optimized
     market_type: any
@@ -424,10 +447,10 @@ strategy_modes:
       pullback_max_pct: 0.035
       bounce_confirmation_pct: 0.0015
       min_volume_ratio: 0.85
-      max_active_minutes: 180
+      max_active_minutes: 10080
     loop_settings:
       preset_name: Optimized LTC
-      method_name: Trend pullback
+      method_name: Sideways range
       order_distance_pct: 1.0
       order_count: 10
   - name: ltc_wide_quality
@@ -439,11 +462,11 @@ strategy_modes:
       pullback_max_pct: 0.035
       bounce_confirmation_pct: 0.0015
       min_volume_ratio: 0.85
-      max_active_minutes: 180
+      max_active_minutes: 10080
     loop_settings:
       preset_name: LTC Wide Quality
-      method_name: Trend pullback
-      order_distance_pct: 2.0
+      method_name: Sideways range
+      order_distance_pct: 1.0
       order_count: 10
   - name: algo_optimized
     market_type: any
@@ -454,13 +477,14 @@ strategy_modes:
       pullback_max_pct: 0.035
       bounce_confirmation_pct: 0.0015
       min_volume_ratio: 0.85
-      max_active_minutes: 180
+      max_active_minutes: 10080
     loop_settings:
       preset_name: Optimized ALGO
-      method_name: Trend pullback
-      order_distance_pct: 2.0
+      method_name: Sideways range
+      order_distance_pct: 1.0
       order_count: 10
   - name: auto_hot_loop
+    enabled: true
     market_type: any
     excluded_base_assets:
       - DOGE
@@ -488,19 +512,29 @@ strategy_modes:
       pullback_max_pct: 0.035
       bounce_confirmation_pct: 0.0015
       min_volume_ratio: 0.85
-      max_active_minutes: 180
+      max_active_minutes: 10080
     loop_settings:
       preset_name: Auto Hot LOOP
-      method_name: Trend pullback
-      order_distance_pct: 1.5
+      method_name: Sideways range
+      order_distance_pct: 1.0
       order_count: 10
 loop_settings:
   preset_name: Mid-term
-  order_distance_pct: 1.5
+  take_profit_mode: total_pnl
+  order_distance_pct: 1.0
   order_count: 10
-  assumed_round_trip_fee_pct: 0.2
-  suggested_profit_pct: 0.006
-  suggested_safety_exit_pct: 0.004
+  assumed_round_trip_fee_pct: 0.5
+  normal_take_profit_min_pct: 5
+  normal_take_profit_max_pct: 5
+  momentum_take_profit_min_pct: 15
+  momentum_take_profit_max_pct: 20
+  monitored_stop_loss_min_pct: 3
+  monitored_stop_loss_max_pct: 3
+  momentum_min_volume_ratio: 1.25
+  momentum_min_rsi: 52
+  momentum_max_rsi: 68
+  suggested_profit_pct: 0.05
+  suggested_safety_exit_pct: 0.03
   max_loop_count: 3
   quote_amount_usdt: 100
 

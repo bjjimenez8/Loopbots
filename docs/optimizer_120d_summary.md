@@ -1,5 +1,7 @@
 # LOOP Optimizer Summary
 
+> Legacy result, superseded by the July 2026 proof audit. This run used only 120 days, small per-coin samples, and a 0.2% fee assumption. It must not be used as current Ready Now proof.
+
 Run date: 2026-06-03
 
 Command:

@@ -50,6 +50,11 @@ class GridSetup:
     historical_avg_drawdown_pct: float
     historical_worst_drawdown_pct: float
     historical_alerts_per_month: float
+    historical_starts: int
+    historical_fee_pct: float
+    historical_train_avg_return_pct: float
+    historical_test_avg_return_pct: float
+    historical_non_overlapping: bool
     score: int
     launch_filter: str = "strict-sideways"
 
@@ -71,6 +76,11 @@ class HotGridProfile:
     historical_avg_drawdown_pct: float
     historical_worst_drawdown_pct: float
     historical_alerts_per_month: float
+    historical_starts: int
+    historical_fee_pct: float
+    historical_train_avg_return_pct: float
+    historical_test_avg_return_pct: float
+    historical_non_overlapping: bool
     score: int
 
 
@@ -149,6 +159,11 @@ class GridWatchService:
                 historical_avg_drawdown_pct=float(item["historical_avg_drawdown_pct"]),
                 historical_worst_drawdown_pct=float(item["historical_worst_drawdown_pct"]),
                 historical_alerts_per_month=float(item["historical_alerts_per_month"]),
+                historical_starts=int(item.get("historical_starts", 0)),
+                historical_fee_pct=float(item.get("historical_fee_pct", 0.0)),
+                historical_train_avg_return_pct=float(item.get("historical_train_avg_return_pct", 0.0)),
+                historical_test_avg_return_pct=float(item.get("historical_test_avg_return_pct", 0.0)),
+                historical_non_overlapping=bool(item.get("historical_non_overlapping", False)),
                 score=int(item["score"]),
                 launch_filter=str(item.get("launch_filter", "strict-sideways")),
             )
@@ -172,6 +187,11 @@ class GridWatchService:
                 historical_avg_drawdown_pct=float(item["historical_avg_drawdown_pct"]),
                 historical_worst_drawdown_pct=float(item["historical_worst_drawdown_pct"]),
                 historical_alerts_per_month=float(item["historical_alerts_per_month"]),
+                historical_starts=int(item.get("historical_starts", 0)),
+                historical_fee_pct=float(item.get("historical_fee_pct", 0.0)),
+                historical_train_avg_return_pct=float(item.get("historical_train_avg_return_pct", 0.0)),
+                historical_test_avg_return_pct=float(item.get("historical_test_avg_return_pct", 0.0)),
+                historical_non_overlapping=bool(item.get("historical_non_overlapping", False)),
                 score=int(item["score"]),
             )
             for item in hot_raw.get("profiles", [])
@@ -231,6 +251,8 @@ class GridWatchService:
         state = self._load_state()
         alerts: list[dict[str, Any]] = []
         for setup in self._candidate_setups():
+            if not self._has_current_proof(setup):
+                continue
             key = self._state_key(setup)
             state_item = state.get(key)
             if self._in_cooldown(state_item):
@@ -340,7 +362,10 @@ class GridWatchService:
             if cooldown:
                 reasons.append("cooldown")
             reasons.extend(status["reasons"])
-            ready = not cooldown and status["passes"]
+            proof_ready = self._has_current_proof(setup)
+            if not proof_ready:
+                reasons.append("needs 30 non-overlapping realistic-fee train/test starts")
+            ready = not cooldown and status["passes"] and proof_ready
             results.append(
                 {
                     "symbol": setup.symbol,
@@ -360,11 +385,26 @@ class GridWatchService:
                     "historical_avg_return_pct": setup.historical_avg_return_pct,
                     "historical_monthly_pct": setup.historical_monthly_pct,
                     "historical_worst_drawdown_pct": setup.historical_worst_drawdown_pct,
+                    "historical_starts": setup.historical_starts,
+                    "historical_fee_pct": setup.historical_fee_pct,
+                    "historical_train_avg_return_pct": setup.historical_train_avg_return_pct,
+                    "historical_test_avg_return_pct": setup.historical_test_avg_return_pct,
+                    "historical_non_overlapping": setup.historical_non_overlapping,
                     "experimental": "experimental" in setup.preset_name.lower(),
                     **status,
                 }
             )
         return results
+
+    @staticmethod
+    def _has_current_proof(setup: GridSetup) -> bool:
+        return bool(
+            setup.historical_starts >= 30
+            and setup.historical_fee_pct >= 0.25
+            and setup.historical_train_avg_return_pct > 0
+            and setup.historical_test_avg_return_pct > 0
+            and setup.historical_non_overlapping
+        )
 
     def paper_snapshot(self, include_diagnostics: bool = False) -> dict[str, Any]:
         rows = self._read_history()
@@ -578,6 +618,11 @@ class GridWatchService:
             historical_avg_drawdown_pct=profile.historical_avg_drawdown_pct,
             historical_worst_drawdown_pct=profile.historical_worst_drawdown_pct,
             historical_alerts_per_month=profile.historical_alerts_per_month,
+            historical_starts=profile.historical_starts,
+            historical_fee_pct=profile.historical_fee_pct,
+            historical_train_avg_return_pct=profile.historical_train_avg_return_pct,
+            historical_test_avg_return_pct=profile.historical_test_avg_return_pct,
+            historical_non_overlapping=profile.historical_non_overlapping,
             score=profile.score,
             launch_filter=profile.launch_filter,
         )
@@ -631,6 +676,11 @@ class GridWatchService:
             historical_avg_drawdown_pct=0.0,
             historical_worst_drawdown_pct=0.0,
             historical_alerts_per_month=0.0,
+            historical_starts=0,
+            historical_fee_pct=0.0,
+            historical_train_avg_return_pct=0.0,
+            historical_test_avg_return_pct=0.0,
+            historical_non_overlapping=False,
             score=score,
             launch_filter=hot.auto_launch_filter,
         )

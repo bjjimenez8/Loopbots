@@ -41,11 +41,14 @@ class MarketDataClient:
             self.exchange.set_sandbox_mode(True)
 
     def fetch_ohlcv(self, symbol: str) -> pd.DataFrame:
-        LOGGER.debug("Fetching %s candles for %s", self.timeframe, symbol)
+        return self.fetch_ohlcv_timeframe(symbol, self.timeframe, self.candle_limit)
+
+    def fetch_ohlcv_timeframe(self, symbol: str, timeframe: str, limit: int) -> pd.DataFrame:
+        LOGGER.debug("Fetching %s candles for %s", timeframe, symbol)
         rows: list[list[Any]] = self.exchange.fetch_ohlcv(
             symbol,
-            timeframe=self.timeframe,
-            limit=self.candle_limit,
+            timeframe=timeframe,
+            limit=limit,
         )
 
         if not rows:
