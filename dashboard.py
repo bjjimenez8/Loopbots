@@ -325,7 +325,7 @@ def render_loop_dashboard(snapshot: dict[str, Any], refresh_seconds: int) -> str
         <h1>LOOP Paper</h1>
         <div class="muted">Auto-refreshes every {int(refresh_seconds)} seconds. Data older than {snapshot["retention_days"]} days is pruned.</div>
       </div>
-      <div class="muted">Generated {_escape(snapshot["generated_at"])}</div>
+      <div class="muted">Generated {_local_time_html(snapshot["generated_at"], "datetime")}</div>
     </header>
     <nav>
       <a href="/opportunities">Opportunities</a>
@@ -376,6 +376,7 @@ def render_loop_dashboard(snapshot: dict[str, Any], refresh_seconds: int) -> str
       </table>
     </section>
   </main>
+  {_browser_timezone_script()}
 </body>
 </html>"""
 
@@ -491,7 +492,7 @@ def render_grid_dashboard(snapshot: dict[str, Any], refresh_seconds: int) -> str
         <h1>GRID Paper</h1>
         <div class="muted">Auto-refreshes every {int(refresh_seconds)} seconds. GRID exits are paper-only and do not send Telegram exit alerts.</div>
       </div>
-      <div class="muted">Generated {_escape(snapshot["generated_at"])}</div>
+      <div class="muted">Generated {_local_time_html(snapshot["generated_at"], "datetime")}</div>
     </header>
     <nav>
       <a href="/opportunities">Opportunities</a>
@@ -542,6 +543,7 @@ def render_grid_dashboard(snapshot: dict[str, Any], refresh_seconds: int) -> str
       </table>
     </section>
   </main>
+  {_browser_timezone_script()}
 </body>
 </html>"""
 
@@ -1072,6 +1074,7 @@ def _render_ready_right_now_dashboard(snapshot: dict[str, Any], payload: dict[st
       if ("scrollRestoration" in history) history.scrollRestoration = "manual";
     }}
   </script>
+  {_browser_timezone_script()}
 </body>
 </html>"""
 
@@ -1083,13 +1086,13 @@ def _ready_setup_card(row: dict[str, Any]) -> str:
     action = _deploy_action(row)
     fields = _ready_settings(row)
     settings_html = "".join(_ready_field(name, value) for name, value in fields)
-    updated = _card_updated_text(row)
+    updated = _card_updated_html(row)
     return (
         '<article class="ready-card">'
         '<div>'
         f'<div class="pair">{_escape(pair)}</div>'
         f'<div class="bot-type">{_escape(strategy)} Bot &bull; Kraken</div>'
-        f'<div class="bot-type">Updated {_escape(updated)}</div>'
+        f'<div class="bot-type">Updated {updated}</div>'
         f'<div class="score">Score {score}/100</div>'
         f'<div class="action-chip deploy">{_escape(action)}</div>'
         f'<div class="reason">{_escape(_short_ready_reason(row))}</div>'
@@ -1250,6 +1253,14 @@ def _card_updated_text(row: dict[str, Any]) -> str:
             return _relative_time_with_clock(updated)
     updated = row.get("updated_at") or row.get("generated_at")
     return _relative_time_with_clock(updated or datetime.now().isoformat())
+
+
+def _card_updated_html(row: dict[str, Any]) -> str:
+    market = row.get("market_snapshot", {})
+    if isinstance(market, dict) and market.get("updated_at"):
+        return _local_time_html(market.get("updated_at"), "relative")
+    updated = row.get("updated_at") or row.get("generated_at") or datetime.now().isoformat()
+    return _local_time_html(updated, "relative")
 
 
 def _relative_time_with_clock(value: Any) -> str:
@@ -2290,7 +2301,7 @@ def render_research_dashboard(snapshot: dict[str, Any], refresh_seconds: int) ->
         <h1>Bot Research</h1>
         <div class="muted">LOOP scans Kraken { _escape(loop.get("quote_asset", "USDT")) } on { _escape(loop.get("timeframe", "")) }; GRID scans Kraken { _escape(", ".join(grid.get("quote_assets", []))) } on { _escape(grid.get("timeframe", "")) }.</div>
       </div>
-      <div class="muted">Generated {_escape(research.get("generated_at", snapshot.get("generated_at", "")))}</div>
+      <div class="muted">Generated {_local_time_html(research.get("generated_at", snapshot.get("generated_at", "")), "datetime")}</div>
     </header>
     <nav>
       <a href="/opportunities">Opportunities</a>
@@ -2351,6 +2362,7 @@ def render_research_dashboard(snapshot: dict[str, Any], refresh_seconds: int) ->
       </table>
     </section>
   </main>
+  {_browser_timezone_script()}
 </body>
 </html>"""
 
@@ -2857,7 +2869,7 @@ def _opportunity_paper_cards(opportunity_paper: dict[str, Any], filters: dict[st
     starting_balance = float(opportunity_paper.get("starting_balance_usd", 10000.0) or 10000.0)
     stats = _paper_stats_html(rows, starting_balance)
     ledger = _paper_ledger_rows(rows) if rows else '<div class="empty-card">No paper trades yet. Ready Now setups will start tracking automatically.</div>'
-    timezone_note = _dashboard_timezone_label()
+    timezone_note = _browser_timezone_label_html()
     return (
         '<section id="paper-performance" class="panel paper-section">'
         f'<div class="paper-head"><div><h2>Paper Trading Performance</h2><div class="muted">{investment} simulated per Ready Now setup. Times shown in {timezone_note}.</div>{_paper_tabs(filters, paper_filter)}</div><a class="top-link" href="/opportunities#top" aria-label="Back to top">&uarr;</a></div>'
@@ -2894,7 +2906,7 @@ def _opportunity_paper_cards(opportunity_paper: dict[str, Any], filters: dict[st
         sections = _paper_strategy_section("GRID", grid_rows, grid_display_rows, starting_balance) + _paper_strategy_section("LOOP", loop_rows, loop_display_rows, starting_balance)
     return (
         '<section id="paper-performance" class="panel paper-section">'
-        f'<div class="paper-head"><div><h2>Paper Trading Performance</h2><div class="muted">{investment} simulated per deploy-ready setup. Fee estimate: {fee}. Times shown in {_dashboard_timezone_label()}.</div>{_paper_tabs(filters, paper_filter)}</div><a class="top-link" href="/opportunities#top" aria-label="Back to top">↑</a></div>'
+        f'<div class="paper-head"><div><h2>Paper Trading Performance</h2><div class="muted">{investment} simulated per deploy-ready setup. Fee estimate: {fee}. Times shown in {_browser_timezone_label_html()}.</div>{_paper_tabs(filters, paper_filter)}</div><a class="top-link" href="/opportunities#top" aria-label="Back to top">↑</a></div>'
         f'{sections}'
         "</section>"
     )
@@ -3010,7 +3022,7 @@ def _paper_trade_row(row: dict[str, Any]) -> str:
     balance_equation = _balance_equation_html(investment, pnl)
     chip_class = "grid" if strategy.upper() == "GRID" else "loop"
     chip_text = "Grid" if strategy.upper() == "GRID" else "Loop"
-    end_date = _paper_datetime(row.get("closed_at", "")) if is_closed else "Open"
+    end_date = _local_time_html(row.get("closed_at", ""), "datetime") if is_closed else "Open"
     exit_price = _price(row.get("exit_price")) if is_closed else "Open"
     result_class = "good" if pnl >= 0 else "bad"
     chart = _paper_live_chart(row)
@@ -3020,9 +3032,9 @@ def _paper_trade_row(row: dict[str, Any]) -> str:
         f'<div><strong>{_escape(pair)}</strong> <span class="subline">{_escape(status.title())}</span></div>'
         f'<div><span class="strategy-chip {chip_class}">{_escape(chip_text)}</span></div>'
         f"{chart}"
-        f'<div>{_escape(_paper_datetime(row.get("opened_at", "")))}</div>'
+        f'<div>{_local_time_html(row.get("opened_at", ""), "datetime")}</div>'
         f'<div>{_price(row.get("entry_price"))}</div>'
-        f'<div>{_escape(end_date)}</div>'
+        f'<div>{end_date}</div>'
         f'<div>{_escape(exit_price)}</div>'
         f'<div>{_money(investment)}</div>'
         f'<div class="{result_class}">{balance_equation}</div>'
@@ -3114,7 +3126,7 @@ def _paper_trade_card(row: dict[str, Any]) -> str:
     return (
         '<article class="paper-trade">'
         f'<div><div class="paper-title">{_escape(pair)}</div><span class="strategy-chip {chip_class}">{chip_text}</span><div class="subline">{status.title()}</div>'
-        f'<div class="subline">Opened {_escape(_paper_datetime(row.get("opened_at", "")))}</div></div>'
+        f'<div class="subline">Opened {_local_time_html(row.get("opened_at", ""), "datetime")}</div></div>'
         '<div>'
         '<div class="paper-detail">'
         f'<div><strong>Entry:</strong> {_price(row.get("entry_price"))}</div>'
@@ -3124,7 +3136,7 @@ def _paper_trade_card(row: dict[str, Any]) -> str:
         f'<div><strong>Reason:</strong> {_escape(reason or note or "Watching setup.")}</div>'
         "</div>"
         f"{_paper_specifics_dropdown(row)}"
-        f'<div class="subline" style="margin-top:8px;">Last checked {_escape(_paper_datetime(row.get("last_checked_at", "")))}</div>'
+        f'<div class="subline" style="margin-top:8px;">Last checked {_local_time_html(row.get("last_checked_at", ""), "datetime")}</div>'
         "</div>"
         f'<div class="paper-result {result_class}">{balance_equation}<div class="subline">{pct}</div></div>'
         "</article>"
@@ -3258,7 +3270,7 @@ def _market_panel(row: dict[str, Any]) -> str:
     color = "#079455" if change >= 0 else "#d92d20"
     change_text = _signed_pct(change)
     current = _fmt_active_price(market.get("current_price"))
-    updated = _short_time(market.get("updated_at", ""))
+    updated = _local_time_html(market.get("updated_at", ""), "time")
     timeframe = str(market.get("timeframe", ""))
     sparkline = _sparkline_svg(market.get("closes", []), color)
     strategy = str(row.get("strategy", "")).upper()
@@ -3269,7 +3281,7 @@ def _market_panel(row: dict[str, Any]) -> str:
         '<div class="market-head"><div class="detail-label">Current price</div><span class="live-badge">LIVE</span></div>'
         f'<div class="market-price">{_escape(current)}</div>'
         f'<div class="market-meta"><span style="color:{color};font-weight:900;">{_escape(change_text)}</span> over selected window ({_escape(timeframe)})</div>'
-        f'<div class="market-meta">Last updated { _escape(updated) }</div>'
+        f'<div class="market-meta">Last updated {updated}</div>'
         "</div>"
         f'<div><div class="market-meta">{_escape(context)}</div>{sparkline}</div>'
         "</div>"
@@ -4102,7 +4114,7 @@ def _active_row(row: dict[str, Any]) -> str:
         f"<td>{_price(row['entry_price'])}</td>"
         f"<td>{_price(row['take_profit_price'])}</td>"
         f"<td>{_price(row['safety_exit_price'])}</td>"
-        f"<td>{_short_time(row.get('opened_at', ''))}</td>"
+        f"<td>{_local_time_html(row.get('opened_at', ''), 'datetime')}</td>"
         f"<td>{_escape(row.get('reason', ''))}</td>"
         "</tr>"
     )
@@ -4122,7 +4134,7 @@ def _closed_row(row: dict[str, Any]) -> str:
         f"<td>{int(row.get('grid_cycles', 0))}</td>"
         f"<td class=\"{'good' if net >= 0 else 'bad'}\">{_signed_pct(net)}</td>"
         f"<td>{float(row.get('hold_hours', 0.0)):.2f}h</td>"
-        f"<td>{_short_time(row.get('event_at', ''))}</td>"
+        f"<td>{_local_time_html(row.get('event_at', ''), 'datetime')}</td>"
         f"<td>{_escape(row.get('exit_reason') or row.get('reason') or '')}</td>"
         "</tr>"
     )
@@ -4176,7 +4188,7 @@ def _grid_active_row(row: dict[str, Any]) -> str:
         f"<td>{_price(row.get('stop_loss_price', 0.0))}</td>"
         f"<td>{_escape(row.get('grid_step_pct', ''))}%</td>"
         f"<td>{_escape(row.get('levels', ''))}</td>"
-        f"<td>{_short_time(row.get('opened_at', ''))}</td>"
+        f"<td>{_local_time_html(row.get('opened_at', ''), 'datetime')}</td>"
         "</tr>"
     )
 
@@ -4194,7 +4206,7 @@ def _grid_closed_row(row: dict[str, Any]) -> str:
         f"<td>{_price(row.get('exit_price', 0.0))}</td>"
         f"<td class=\"{'good' if net >= 0 else 'bad'}\">{_signed_pct(net)}</td>"
         f"<td>{_escape(row.get('grid_step_pct', ''))}%</td>"
-        f"<td>{_short_time(row.get('event_at', ''))}</td>"
+        f"<td>{_local_time_html(row.get('event_at', ''), 'datetime')}</td>"
         f"<td>{_escape(row.get('exit_reason', ''))}</td>"
         "</tr>"
     )
@@ -4283,3 +4295,56 @@ def _dashboard_timezone_label() -> str:
     if abbreviation:
         return f"{_escape(DASHBOARD_TIMEZONE)} ({_escape(abbreviation)})"
     return _escape(DASHBOARD_TIMEZONE)
+
+
+def _browser_timezone_label_html() -> str:
+    return f'<span data-browser-timezone>{_dashboard_timezone_label()}</span>'
+
+
+def _local_time_html(value: Any, mode: str = "time") -> str:
+    parsed = _parse_time(value)
+    fallback = _relative_time_with_clock(value) if mode == "relative" else (
+        _paper_datetime(value) if mode == "datetime" else _short_time(value)
+    )
+    if parsed is None:
+        return _escape(fallback)
+    timestamp = parsed.isoformat()
+    return (
+        f'<span data-local-time="{_escape(mode)}" '
+        f'data-timestamp="{_escape(timestamp)}">{_escape(fallback)}</span>'
+    )
+
+
+def _browser_timezone_script() -> str:
+    return """<script>
+    (function () {
+      var zone = Intl.DateTimeFormat().resolvedOptions().timeZone || "your local timezone";
+      document.querySelectorAll("[data-browser-timezone]").forEach(function (element) {
+        element.textContent = zone;
+      });
+
+      function relativeAge(date) {
+        var seconds = Math.max(Math.floor((Date.now() - date.getTime()) / 1000), 0);
+        if (seconds < 60) return "just now";
+        if (seconds < 3600) return Math.floor(seconds / 60) + " min ago";
+        if (seconds < 86400) return Math.floor(seconds / 3600) + "h ago";
+        return Math.floor(seconds / 86400) + "d ago";
+      }
+
+      function updateLocalTimes() {
+        document.querySelectorAll("[data-local-time]").forEach(function (element) {
+          var date = new Date(element.dataset.timestamp);
+          if (Number.isNaN(date.getTime())) return;
+          var mode = element.dataset.localTime;
+          var options = mode === "datetime"
+            ? { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", second: "2-digit", timeZoneName: "short" }
+            : { hour: "numeric", minute: "2-digit", second: "2-digit", timeZoneName: "short" };
+          var formatted = new Intl.DateTimeFormat([], options).format(date);
+          element.textContent = mode === "relative" ? relativeAge(date) + " - " + formatted : formatted;
+        });
+      }
+
+      updateLocalTimes();
+      setInterval(updateLocalTimes, 30000);
+    }());
+  </script>"""
