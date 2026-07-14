@@ -6,7 +6,7 @@ from typing import Any, Literal
 
 
 OpportunityStatus = Literal["Ready Now", "Wait", "Avoid"]
-StrategyType = Literal["GRID", "LOOP"]
+StrategyType = Literal["LOOP"]
 RiskLevel = Literal["Conservative", "Balanced", "Aggressive"]
 SpeedLevel = Literal["Slow", "Medium", "Fast"]
 
@@ -16,12 +16,6 @@ LOOP_MAX_GROSS_TARGET_PCT = 20.0
 LOOP_MIN_NET_PROFIT_PCT = LOOP_MIN_GROSS_TARGET_PCT - LOOP_ESTIMATED_FEE_IMPACT_PCT
 LOOP_PRICE_ROUNDING_TOLERANCE_PCT = 0.05
 LOOP_READY_SCORE = 70
-GRID_READY_SCORE = 75
-GRID_MIN_WIN_RATE_PCT = 70.0
-GRID_MIN_AVG_RETURN_PCT = 4.0
-GRID_MAX_WORST_DRAWDOWN_PCT = 10.0
-GRID_MIN_PROOF_STARTS = 30
-GRID_MIN_REALISTIC_FEE_PCT = 0.25
 LOOP_MIN_PROOF_TRADES = 4
 LOOP_MIN_PROOF_WIN_RATE_PCT = 65.0
 LOOP_MIN_MONTHLY_PER_1K = 10.0
@@ -55,13 +49,11 @@ class Opportunity:
 
 def build_opportunities(
     loop_rows: list[dict[str, Any]],
-    grid_rows: list[dict[str, Any]],
     loop_proof_rows: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     loop_proof = {_proof_symbol(row.get("symbol", "")): row for row in loop_proof_rows}
     opportunities: list[Opportunity] = []
     opportunities.extend(_loop_opportunity(row, loop_proof) for row in loop_rows)
-    opportunities.extend(_grid_opportunity(row) for row in grid_rows)
     opportunities.sort(
         key=lambda item: (
             _status_rank(item.status),
@@ -119,7 +111,6 @@ def _loop_opportunity(row: dict[str, Any], proof_by_symbol: dict[str, dict[str, 
     raw_reason = str(row.get("reason", ""))
     debug = _loop_debug(row, raw_reason, score)
     proof_row = proof_by_symbol.get(_proof_symbol(pair), {})
-    proof_is_current = _grid_has_current_proof(debug)
     proof = ProofStats(
         win_rate_pct=_optional_float(proof_row.get("win_rate_pct")),
         average_return_pct=_optional_float(proof_row.get("monthly_per_1k")),
@@ -166,62 +157,6 @@ def _loop_opportunity(row: dict[str, Any], proof_by_symbol: dict[str, dict[str, 
         bitsgap_fields=bitsgap_fields,
         proof=proof,
         reason=reason,
-        score=score,
-    )
-
-
-def _grid_opportunity(row: dict[str, Any]) -> Opportunity:
-    pair = str(row.get("symbol", ""))
-    score = int(float(row.get("score", 0) or 0))
-    debug = _grid_debug(row, score)
-    status = _practical_grid_status(debug)
-    current_price = float(row.get("current_price", 0.0) or 0.0)
-    lower_pct = float(row.get("lower_pct", 0.0) or 0.0)
-    upper_pct = float(row.get("upper_pct", 0.0) or 0.0)
-    take_profit_pct = float(row.get("take_profit_pct", 0.0) or 0.0)
-    stop_loss_pct = float(row.get("stop_loss_pct", 0.0) or 0.0)
-    low_price = current_price * (1 - lower_pct / 100) if current_price > 0 else 0.0
-    high_price = current_price * (1 + upper_pct / 100) if current_price > 0 else 0.0
-    take_profit_price = current_price * (1 + take_profit_pct / 100) if current_price > 0 and take_profit_pct > 0 else 0.0
-    stop_loss_price = current_price * (1 - stop_loss_pct / 100) if current_price > 0 and stop_loss_pct > 0 else 0.0
-    entry_zone = _grid_entry_zone(low_price, high_price)
-    win_rate = _optional_float(row.get("historical_win_rate_pct"))
-    avg_return = _optional_float(row.get("historical_avg_return_pct"))
-    worst_drawdown = _optional_float(row.get("historical_worst_drawdown_pct"))
-    has_historical_proof = bool((win_rate or 0.0) > 0 or (avg_return or 0.0) != 0 or (worst_drawdown or 0.0) != 0)
-    proof = ProofStats(
-        win_rate_pct=win_rate,
-        average_return_pct=avg_return,
-        worst_drawdown_pct=worst_drawdown,
-        historical_starts=_optional_int(row.get("historical_starts")),
-        label=(
-            "proven"
-            if proof_is_current and not bool(row.get("experimental"))
-            else "weak data" if has_historical_proof else "experimental"
-        ),
-    )
-    bitsgap_fields = {
-        "Pair": pair,
-        "Low price": _price_or_note(low_price, "Needs live price"),
-        "High price": _price_or_note(high_price, "Needs live price"),
-        "Grid levels": _text(row.get("levels"), "n/a"),
-        "Grid step": _pct_text(row.get("grid_step_pct")),
-        "Stop loss": _stop_loss_text(stop_loss_pct, stop_loss_price),
-        "Take profit": _take_profit_text(take_profit_pct, take_profit_price),
-        "Trailing up/down": "Trailing Up on, Trailing Down off",
-        "Profit protection": "Trail only if price keeps breaking upward. If range breaks down, respect stop loss.",
-    }
-    return Opportunity(
-        id=f"grid:{pair}:{row.get('preset_name', '')}",
-        strategy="GRID",
-        pair=pair,
-        status=status,
-        risk=_grid_risk(row),
-        speed=_grid_speed(row),
-        entry_zone=entry_zone,
-        bitsgap_fields=bitsgap_fields,
-        proof=proof,
-        reason=_practical_reason(status, debug, strategy="GRID"),
         score=score,
     )
 
@@ -293,45 +228,6 @@ def _loop_debug(row: dict[str, Any], raw_reason: str, score: int) -> dict[str, A
     }
 
 
-def _grid_debug(row: dict[str, Any], score: int) -> dict[str, Any]:
-    blockers = _reason_parts(str(row.get("reason", "")))
-    avoid = []
-    cooldown_reasons = ["recently alerted / cooldown"] if bool(row.get("cooldown")) else []
-    avoid.extend(item for item in blockers if item in {"data error", "no candles", "not enough candles", "invalid range"})
-    range_position = _optional_float(row.get("range_position"))
-    volatility = _optional_float(row.get("range_pct"))
-    if range_position is not None and not -0.15 <= range_position <= 1.15:
-        avoid.append(f"price far outside range ({range_position:.2f})")
-    if volatility is not None and volatility > 80:
-        avoid.append(f"extreme volatility ({volatility:.2f}%)")
-    return {
-        "ready_blockers": blockers,
-        "wait_reasons": cooldown_reasons + [item for item in blockers if item not in avoid and item != "cooldown"],
-        "avoid_reasons": avoid,
-        "raw_score": score,
-        "range_position": range_position,
-        "volatility": volatility,
-        "liquidity_volume": "not available in scan record",
-        "trend_regime": _grid_regime(row),
-        "fee_impact": "paper fee configured in GRID tracker; not exposed per setup",
-        "trend_return_pct": _optional_float(row.get("trend_return_pct")),
-        "directional_efficiency": _optional_float(row.get("directional_efficiency")),
-        "historical_win_rate_pct": _optional_float(row.get("historical_win_rate_pct")),
-        "historical_avg_return_pct": _optional_float(row.get("historical_avg_return_pct")),
-        "historical_monthly_pct": _optional_float(row.get("historical_monthly_pct")),
-        "historical_worst_drawdown_pct": _optional_float(row.get("historical_worst_drawdown_pct")),
-        "historical_starts": _optional_int(row.get("historical_starts")),
-        "historical_fee_pct": _optional_float(row.get("historical_fee_pct")),
-        "historical_train_avg_return_pct": _optional_float(row.get("historical_train_avg_return_pct")),
-        "historical_test_avg_return_pct": _optional_float(row.get("historical_test_avg_return_pct")),
-        "historical_non_overlapping": bool(row.get("historical_non_overlapping")),
-        "adaptive_proof_model": str(row.get("adaptive_proof_model", "")),
-        "adaptive_proof_status": str(row.get("adaptive_proof_status", "")),
-        "take_profit_pct": _optional_float(row.get("take_profit_pct")),
-        "stop_loss_pct": _optional_float(row.get("stop_loss_pct")),
-    }
-
-
 def _practical_loop_status(
     debug: dict[str, Any],
     proof: ProofStats | None = None,
@@ -363,43 +259,6 @@ def _practical_loop_status(
     return "Wait"
 
 
-def _practical_grid_status(debug: dict[str, Any]) -> OpportunityStatus:
-    score = float(debug.get("raw_score") or 0.0)
-    if debug.get("avoid_reasons"):
-        return "Avoid"
-    win_rate = float(debug.get("historical_win_rate_pct") or 0.0)
-    avg_return = float(debug.get("historical_avg_return_pct") or 0.0)
-    monthly_return = float(debug.get("historical_monthly_pct") or 0.0)
-    worst_drawdown = abs(float(debug.get("historical_worst_drawdown_pct") or 0.0))
-    take_profit_pct = float(debug.get("take_profit_pct") or 0.0)
-    stop_loss_pct = float(debug.get("stop_loss_pct") or 0.0)
-    has_proof = (
-        win_rate >= GRID_MIN_WIN_RATE_PCT
-        and avg_return >= GRID_MIN_AVG_RETURN_PCT
-        and monthly_return >= 10.0
-        and 0.0 < worst_drawdown <= GRID_MAX_WORST_DRAWDOWN_PCT
-        and _grid_has_current_proof(debug)
-        and debug.get("adaptive_proof_model") == LOOP_PROOF_MODEL
-        and debug.get("adaptive_proof_status") == "Proven"
-    )
-    risk_settings_ok = 8.0 <= take_profit_pct <= 12.0 and 5.0 <= stop_loss_pct <= 7.0
-    if score >= GRID_READY_SCORE and has_proof and risk_settings_ok:
-        return "Ready Now"
-    if score < 25:
-        return "Avoid"
-    return "Wait"
-
-
-def _grid_has_current_proof(debug: dict[str, Any]) -> bool:
-    return bool(
-        int(debug.get("historical_starts") or 0) >= GRID_MIN_PROOF_STARTS
-        and float(debug.get("historical_fee_pct") or 0.0) >= GRID_MIN_REALISTIC_FEE_PCT
-        and float(debug.get("historical_train_avg_return_pct") or 0.0) > 0
-        and float(debug.get("historical_test_avg_return_pct") or 0.0) > 0
-        and debug.get("historical_non_overlapping") is True
-    )
-
-
 def _practical_reason(status: OpportunityStatus, debug: dict[str, Any], strategy: str) -> str:
     if status == "Ready Now":
         if strategy == "LOOP":
@@ -418,18 +277,6 @@ def _practical_reason(status: OpportunityStatus, debug: dict[str, Any], strategy
         return "Wait: the current bull-regime Total PnL proof is below the required win rate."
     reasons = debug.get("wait_reasons") or debug.get("ready_blockers") or ["needs a cleaner setup"]
     return "Wait: " + ", ".join(str(item) for item in reasons[:3]) + "."
-
-
-def _grid_regime(row: dict[str, Any]) -> str:
-    trend = _optional_float(row.get("trend_return_pct"))
-    directional = _optional_float(row.get("directional_efficiency"))
-    if trend is None:
-        return "unknown"
-    if directional is not None and directional <= 0.4:
-        return "sideways"
-    if trend > 0:
-        return "uptrend"
-    return "downtrend"
 
 
 def _reason_parts(reason: str) -> list[str]:
@@ -456,26 +303,6 @@ def _entry_zone(row: dict[str, Any]) -> str:
     return "Wait for next ready signal"
 
 
-def _grid_entry_zone(low_price: float, high_price: float) -> str:
-    if low_price > 0 and high_price > 0:
-        return f"{_format_price(low_price)} - {_format_price(high_price)}"
-    return "Needs live price"
-
-
-def _stop_loss_text(stop_loss_pct: float, stop_loss_price: float) -> str:
-    pct = _pct_text(stop_loss_pct)
-    if stop_loss_price > 0:
-        return f"On (-{pct}) at {_format_price(stop_loss_price)}"
-    return f"On (-{pct})"
-
-
-def _take_profit_text(take_profit_pct: float, take_profit_price: float) -> str:
-    pct = _pct_text(take_profit_pct)
-    if take_profit_price > 0:
-        return f"On (+{pct}) at {_format_price(take_profit_price)}"
-    return f"On (+{pct})"
-
-
 def _loop_risk(score: int, proof: ProofStats) -> RiskLevel:
     starts = proof.historical_starts or 0
     win_rate = proof.win_rate_pct or 0.0
@@ -486,36 +313,11 @@ def _loop_risk(score: int, proof: ProofStats) -> RiskLevel:
     return "Balanced"
 
 
-def _grid_risk(row: dict[str, Any]) -> RiskLevel:
-    if bool(row.get("experimental")):
-        return "Aggressive"
-    win_rate = float(row.get("historical_win_rate_pct", 0.0) or 0.0)
-    avg_return = float(row.get("historical_avg_return_pct", 0.0) or 0.0)
-    drawdown = abs(float(row.get("historical_worst_drawdown_pct", 0.0) or 0.0))
-    if win_rate <= 0 and avg_return == 0 and drawdown == 0:
-        return "Aggressive"
-    if win_rate >= 70 and drawdown <= 8:
-        return "Conservative"
-    if win_rate < 55 or drawdown > 12:
-        return "Aggressive"
-    return "Balanced"
-
-
 def _loop_speed(mode: str) -> SpeedLevel:
     mode = mode.lower()
     if "short" in mode or "fast" in mode:
         return "Fast"
     if "long" in mode or "slow" in mode:
-        return "Slow"
-    return "Medium"
-
-
-def _grid_speed(row: dict[str, Any]) -> SpeedLevel:
-    levels = int(float(row.get("levels", 0) or 0))
-    upper_pct = float(row.get("upper_pct", 0.0) or 0.0)
-    if levels <= 15 or upper_pct <= 12:
-        return "Fast"
-    if levels >= 50 or upper_pct >= 50:
         return "Slow"
     return "Medium"
 
@@ -615,14 +417,13 @@ def _format_price(value: float) -> str:
 
 def opportunity_snapshot(
     loop_rows: list[dict[str, Any]],
-    grid_rows: list[dict[str, Any]],
     loop_proof_rows: list[dict[str, Any]],
     strategy_filter: str = "both",
     status_filter: str = "all",
     risk_filter: str = "all",
     speed_filter: str = "all",
 ) -> dict[str, Any]:
-    opportunities = build_opportunities(loop_rows, grid_rows, loop_proof_rows)
+    opportunities = build_opportunities(loop_rows, loop_proof_rows)
     filtered = filter_opportunities(
         opportunities,
         strategy=strategy_filter,

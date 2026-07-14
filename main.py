@@ -18,7 +18,6 @@ from apscheduler.triggers.interval import IntervalTrigger
 from active_setups import ActiveSetupConfig, ActiveSetupStore
 from backtest_lab import run_interactive_backtest
 from dashboard import DashboardConfig, PaperDashboardServer
-from grid_watch import GridWatchService
 from market_regime import mode_allowed
 from market_data import MarketDataClient, MarketDataConfig
 from news_brief import MorningBriefConfig, MorningBriefService
@@ -80,7 +79,6 @@ class LoopbotsApp:
             chat_id=config["telegram"]["chat_id"],
         )
         self.telegram_enabled = False
-        self.grid_watch = GridWatchService.from_config(config.get("grid_watch", {}), PROJECT_ROOT)
         self.status_config = config.get("status_report", {})
         self.status_state_path = PROJECT_ROOT / self.status_config.get("state_file", "data/status_report_state.json")
         self.status_state_path.parent.mkdir(parents=True, exist_ok=True)
@@ -91,7 +89,6 @@ class LoopbotsApp:
             "risk_on": False,
             "reason": "BTC market regime has not been checked yet",
         }
-        self.grid_scan_rows: list[dict[str, Any]] = []
         self.opportunity_market_cache: dict[str, dict[str, Any]] = {}
         morning_config = config.get("morning_brief", {})
         self.morning_brief = MorningBriefService(
@@ -157,7 +154,6 @@ class LoopbotsApp:
                 refresh_seconds=int(dashboard_config.get("refresh_seconds", 30)),
                 timezone=str(dashboard_config.get("timezone", config["scheduler"]["timezone"])),
             ),
-            grid_snapshot_provider=self._grid_snapshot_for_dashboard,
             loop_details_provider=lambda: {
                 "pairs": list(self.pairs),
                 "scanned": self.market_data.discovery_snapshot(),
@@ -165,7 +161,7 @@ class LoopbotsApp:
             },
             research_provider=self._research_snapshot,
             opportunity_provider=self._opportunity_snapshot,
-            backtest_provider=lambda query: run_interactive_backtest(query, PROJECT_ROOT),
+            backtest_provider=lambda query: run_interactive_backtest({**query, "bot": ["loop"]}, PROJECT_ROOT),
             active_setup_provider=self._active_setups_snapshot,
             opportunity_paper_provider=self._opportunity_paper_display_snapshot,
             use_setup_handler=self._use_setup_from_form,
@@ -252,38 +248,12 @@ class LoopbotsApp:
                 logging.exception("Failed to scan %s", symbol)
 
         logging.info("Scan complete")
-        grid_counts = await self.scan_grid_watch()
-        total_alerts = loop_entry_count + loop_exit_count + grid_counts["entries"]
+        total_alerts = loop_entry_count + loop_exit_count
         if self.telegram_enabled and total_alerts == 0:
             await self.maybe_send_no_alert_status(loop_diagnostics)
         self._auto_track_opportunity_paper()
         self._opportunity_paper_snapshot(refresh=True)
         self._prune_paper_history()
-
-    async def scan_grid_watch(self) -> dict[str, int]:
-        counts = {"entries": 0, "paper_closed": 0}
-        if not self.grid_watch.config.enabled:
-            return counts
-
-        try:
-            closed_paper = self.grid_watch.update_paper_trades()
-            alerts = self.grid_watch.find_alerts()
-        except Exception:
-            logging.exception("Failed to scan GRID watch")
-            return counts
-
-        counts["paper_closed"] = len(closed_paper)
-        if closed_paper:
-            logging.info("Closed %d GRID paper trades", len(closed_paper))
-
-        if self.telegram_enabled:
-            for alert in alerts:
-                await self.telegram.send_grid_alert(alert)
-        counts["entries"] = len(alerts)
-        if alerts:
-            logging.info("Sent %d GRID watch alerts", len(alerts))
-        self._refresh_grid_scan_rows()
-        return counts
 
     async def maybe_send_no_alert_status(self, loop_diagnostics: list[dict[str, Any]]) -> None:
         if not self.telegram_enabled:
@@ -328,19 +298,11 @@ class LoopbotsApp:
 
     def _build_no_alert_status(self, loop_diagnostics: list[dict[str, Any]]) -> str:
         closest_loop = sorted(loop_diagnostics, key=lambda row: row.get("score", 0), reverse=True)[:3]
-        grid_diagnostics = self.grid_watch.diagnostics() if self.grid_watch.config.enabled else []
-        closest_grid = sorted(
-            grid_diagnostics,
-            key=lambda row: row.get("score", 0),
-            reverse=True,
-        )[:3]
-
         lines = [
             "BOT STATUS",
             "No entries this scan.",
             "Why: waiting for cleaner setup.",
             f"Closest LOOP: {self._format_status_names(closest_loop, max_score=80)}",
-            f"Closest GRID: {self._format_status_names(closest_grid, max_score=100)}",
         ]
         return "\n".join(lines)
 
@@ -358,20 +320,6 @@ class LoopbotsApp:
             return ["- none"]
         return [
             f"- {row.get('symbol', 'n/a')} {row.get('score', 0)}/80 needs {row.get('reason', 'cleaner setup')}"
-            for row in rows
-        ]
-
-    @staticmethod
-    def _format_grid_closest(rows: list[dict[str, Any]]) -> list[str]:
-        if not rows:
-            return ["- none"]
-        return [
-            (
-                f"- {row.get('symbol', 'n/a')} "
-                f"trend {row.get('trend_return_pct', 'n/a')}%, "
-                f"position {row.get('range_position', 'n/a')} "
-                f"needs {row.get('reason', 'cleaner range')}"
-            )
             for row in rows
         ]
 
@@ -494,31 +442,8 @@ class LoopbotsApp:
             ),
         )
 
-    def _grid_snapshot_for_dashboard(self) -> dict[str, Any]:
-        if self.grid_watch.config.enabled and not self.grid_scan_rows:
-            self._refresh_grid_scan_rows()
-        snapshot = self.grid_watch.paper_snapshot(include_diagnostics=False)
-        snapshot["scanned"] = [self._with_adaptive_grid_proof(row) for row in self.grid_scan_rows]
-        return snapshot
-
-    def _with_adaptive_grid_proof(self, row: dict[str, Any]) -> dict[str, Any]:
-        row = {**row, "timeframe": self.grid_watch.config.timeframe}
-        proof = self.proof_registry.grid_proof_for(row)
-        row["adaptive_proof_model"] = proof.get("proof_model", "")
-        row["adaptive_proof_status"] = proof.get("status", "Needs stronger proof")
-        row["ready"] = bool(row.get("ready")) and bool(proof)
-        return row
-
-    def _refresh_grid_scan_rows(self) -> None:
-        try:
-            self.grid_scan_rows = self.grid_watch.paper_snapshot(include_diagnostics=True).get("scanned", [])
-        except Exception:
-            logging.exception("Failed to refresh cached GRID scan rows")
-
     def _research_snapshot(self) -> dict[str, Any]:
-        grid_stats = self._grid_snapshot_for_dashboard()
         loop_rows = [self._with_loop_setup(row) for row in self._sorted_loop_scan_rows()]
-        grid_rows = grid_stats.get("scanned", [])
         return {
             "generated_at": datetime.now(UTC).isoformat(),
             "scan_interval_minutes": int(self.config.get("scheduler", {}).get("interval_minutes", 15)),
@@ -531,30 +456,19 @@ class LoopbotsApp:
                 "proof": self._loop_research_proof(),
                 "paper": self.paper_tracker.snapshot()["window_stats"],
             },
-            "grid": {
-                "timeframe": self.grid_watch.config.timeframe,
-                "quote_assets": self.grid_watch.config.hot_discovery.quote_assets,
-                "scanned_count": len(grid_rows),
-                "ready_count": sum(1 for row in grid_rows if row.get("ready")),
-                "top_live": grid_rows[:10],
-                "proof": self._grid_research_proof(),
-                "paper": grid_stats,
-            },
         }
 
     def _opportunity_snapshot(self, query: dict[str, list[str]]) -> dict[str, Any]:
         if self._query_value(query, "scan", "") == "now":
             self._dashboard_scan_now()
-        grid_stats = self._grid_snapshot_for_dashboard()
         loop_rows = [self._with_loop_setup(row) for row in self._sorted_loop_scan_rows()]
         horizon_filter = self._query_value(query, "horizon", "all")
         if horizon_filter not in {"all", "short", "mid", "long"}:
             horizon_filter = "all"
-        strategy_filter = "both"
+        strategy_filter = "loop"
         speed_filter = "all" if horizon_filter == "all" else self._horizon_to_speed(horizon_filter)
         snapshot = opportunity_snapshot(
             loop_rows=loop_rows,
-            grid_rows=grid_stats.get("scanned", []),
             loop_proof_rows=self._loop_research_proof(),
             strategy_filter=strategy_filter,
             status_filter=self._query_value(query, "status", "all"),
@@ -564,7 +478,6 @@ class LoopbotsApp:
         if speed_filter == "all" and not any(item.get("status") == "Ready Now" for item in snapshot.get("opportunities", [])):
             snapshot = opportunity_snapshot(
                 loop_rows=loop_rows,
-                grid_rows=grid_stats.get("scanned", []),
                 loop_proof_rows=self._loop_research_proof(),
                 strategy_filter=strategy_filter,
                 status_filter=self._query_value(query, "status", "all"),
@@ -575,7 +488,7 @@ class LoopbotsApp:
         snapshot["filters"]["speed"] = speed_filter
         snapshot["filters"]["risk"] = "all"
         paper_filter = self._query_value(query, "paper", "all")
-        snapshot["filters"]["paper"] = paper_filter if paper_filter in {"all", "grid", "loop"} else "all"
+        snapshot["filters"]["paper"] = "loop"
         self._attach_market_snapshots(snapshot, horizon_filter)
         self._track_ready_opportunity_paper(snapshot)
         return snapshot
@@ -593,7 +506,6 @@ class LoopbotsApp:
                     self.loop_scan_rows.append(self._apply_loop_market_gate(self._loop_scan_row(symbol, diagnostics)))
                 except Exception:
                     logging.exception("Dashboard scan failed for LOOP %s", symbol)
-            self._refresh_grid_scan_rows()
             logging.info("Dashboard Scan Kraken Now completed")
         except Exception:
             logging.exception("Dashboard Scan Kraken Now failed")
@@ -646,14 +558,13 @@ class LoopbotsApp:
 
     def _auto_track_opportunity_paper(self) -> None:
         considered = 0
-        for strategy in ("grid", "loop"):
-            for horizon in ("short", "mid", "long"):
-                try:
-                    snapshot = self._opportunity_snapshot({"strategy": [strategy], "horizon": [horizon]})
-                except Exception:
-                    logging.exception("Failed to auto-track %s %s opportunity paper", strategy, horizon)
-                    continue
-                considered += sum(1 for item in snapshot.get("opportunities", []) if self._is_customer_ready_opportunity(item))
+        for horizon in ("short", "mid", "long"):
+            try:
+                snapshot = self._opportunity_snapshot({"strategy": ["loop"], "horizon": [horizon]})
+            except Exception:
+                logging.exception("Failed to auto-track LOOP %s opportunity paper", horizon)
+                continue
+            considered += sum(1 for item in snapshot.get("opportunities", []) if self._is_customer_ready_opportunity(item))
         if considered:
             logging.info("Opportunity paper auto-tracked/confirmed %d Ready Now setups", considered)
 
@@ -674,10 +585,7 @@ class LoopbotsApp:
         if not isinstance(fields, dict):
             return False
         strategy = str(item.get("strategy", "")).upper()
-        if strategy == "GRID":
-            required = ["Low price", "High price", "Grid levels", "Grid step", "Take profit", "Stop loss"]
-            minimum_score = 75
-        elif strategy == "LOOP":
+        if strategy == "LOOP":
             required = ["Order distance", "Order count", "Take profit", "Stop loss"]
             minimum_score = 70
         else:
@@ -723,7 +631,7 @@ class LoopbotsApp:
                     "current_price": current,
                     "change_pct": 0.0,
                     "closes": [current],
-                    "timeframe": self.grid_watch.config.timeframe if str(item.get("strategy", "")).upper() == "GRID" else self.market_data.timeframe,
+                    "timeframe": self.market_data.timeframe,
                     "updated_at": snapshot.get("generated_at", datetime.now(UTC).isoformat()),
                 }
 
@@ -771,19 +679,25 @@ class LoopbotsApp:
             logging.info("Finished active manual setup %s", setup_id)
 
     def _active_setups_snapshot(self) -> dict[str, Any]:
-        return self.active_setups.snapshot(self._active_setup_candles)
+        return self._loop_only_snapshot(self.active_setups.snapshot(self._active_setup_candles))
 
     def _opportunity_paper_display_snapshot(self) -> dict[str, Any]:
         return self._opportunity_paper_snapshot(refresh=False)
 
     def _opportunity_paper_snapshot(self, refresh: bool = True) -> dict[str, Any]:
-        return self.opportunity_paper.snapshot(self._active_setup_candles, refresh=refresh)
+        return self._loop_only_snapshot(self.opportunity_paper.snapshot(self._active_setup_candles, refresh=refresh))
 
     def _active_setup_candles(self, setup: dict[str, Any]) -> Any:
         symbol = str(setup.get("pair", ""))
-        if str(setup.get("strategy", "")).upper() == "GRID":
-            return self.grid_watch._fetch_candles(symbol)
         return self.market_data.fetch_ohlcv(symbol)
+
+    @staticmethod
+    def _loop_only_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
+        filtered = dict(snapshot)
+        for key in ("active", "finished", "open", "closed"):
+            if isinstance(snapshot.get(key), list):
+                filtered[key] = [row for row in snapshot[key] if str(row.get("strategy", "")).upper() == "LOOP"]
+        return filtered
 
     @staticmethod
     def _raw_form_value(form: dict[str, list[str]], key: str) -> str:
@@ -810,7 +724,7 @@ class LoopbotsApp:
 
     def _customer_strategy_filter(self, query: dict[str, list[str]]) -> str:
         strategy = self._query_value(query, "strategy", "both")
-        return strategy if strategy in {"grid", "loop", "both"} else "both"
+        return "loop"
 
     def _with_loop_setup(self, row: dict[str, Any]) -> dict[str, Any]:
         setup = self._loop_setup_by_mode().get(str(row.get("mode", "")), {})
@@ -837,9 +751,6 @@ class LoopbotsApp:
 
     def _loop_research_proof(self) -> list[dict[str, Any]]:
         return self.proof_registry.research_rows("LOOP")
-
-    def _grid_research_proof(self) -> list[dict[str, Any]]:
-        return self.proof_registry.research_rows("GRID")
 
     def _loop_diagnostics(self, symbol: str, candles: Any) -> list[dict[str, Any]]:
         results = []

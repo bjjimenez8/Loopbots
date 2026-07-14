@@ -10,7 +10,6 @@ from typing import Any
 import pandas as pd
 
 from run_backtest import _combined_trade_returns, _new_grid_state, _update_grid_state
-from run_grid_backtest import GridPreset, rolling_backtest_grid
 from strategy import Signal
 
 
@@ -30,20 +29,6 @@ class LoopCandidate:
     regime: str
 
 
-@dataclass(frozen=True)
-class GridCandidate:
-    name: str
-    timeframe: str
-    hold_days: int
-    lookback_days: int
-    lower_pct: float
-    upper_pct: float
-    levels: int
-    take_profit_pct: float
-    stop_loss_pct: float
-    launch_filter: str
-
-
 LOOP_CANDIDATES = [
     LoopCandidate("short_range", "1h", 7, 21, 1.0, 10, 3.0, 5.0, "sideways_bull"),
     LoopCandidate("mid_accumulation", "1h", 14, 30, 1.2, 10, 5.0, 7.0, "sideways_bull"),
@@ -54,16 +39,7 @@ LOOP_CANDIDATES = [
 ]
 
 
-GRID_CANDIDATES = [
-    GridCandidate("short_range", "1h", 7, 14, 8.0, 12.0, 20, 5.0, 5.0, "strict-sideways"),
-    GridCandidate("mid_range", "1h", 14, 21, 12.0, 20.0, 20, 8.0, 7.0, "sideways"),
-    GridCandidate("wide_range", "1h", 21, 30, 10.0, 25.0, 30, 8.0, 8.0, "strict-sideways"),
-    GridCandidate("long_range", "1h", 30, 45, 18.0, 35.0, 20, 10.0, 10.0, "sideways"),
-    GridCandidate("wide_profit", "1h", 30, 45, 20.0, 40.0, 30, 12.0, 10.0, "strict-sideways"),
-]
-
-
-def build_registry(cache_dir: Path, output_path: Path, fee_loop_pct: float, fee_grid_pct: float) -> dict[str, Any]:
+def build_registry(cache_dir: Path, output_path: Path, fee_loop_pct: float) -> dict[str, Any]:
     rows: list[dict[str, Any]] = []
     for path in sorted(cache_dir.glob("okx_*_USDT_1h_730d.csv")):
         symbol = _symbol_from_cache(path)
@@ -74,14 +50,13 @@ def build_registry(cache_dir: Path, output_path: Path, fee_loop_pct: float, fee_
         train = candles.iloc[:split_index].reset_index(drop=True)
         test = candles.iloc[split_index:].reset_index(drop=True)
         rows.append(_select_loop_profile(symbol, train, test, fee_loop_pct))
-        rows.append(_select_grid_profile(symbol, train, test, fee_grid_pct))
 
     registry = {
         "version": REGISTRY_VERSION,
         "generated_at": datetime.now(UTC).isoformat(),
         "history_source": "OKX public candles for Kraken-listed spot symbols",
         "method": "first-half selection, untouched second-half validation, non-overlapping starts",
-        "fees": {"loop_round_trip_pct": fee_loop_pct, "grid_per_fill_pct": fee_grid_pct},
+        "fees": {"loop_round_trip_pct": fee_loop_pct},
         "profiles": rows,
     }
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -98,17 +73,6 @@ def _select_loop_profile(symbol: str, train: pd.DataFrame, test: pd.DataFrame, f
     test_stats = _rolling_loop(test, candidate, fee_pct)
     proven, reasons = _proof_decision(train_stats, test_stats, max_drawdown_pct=12.0)
     return _profile_row("LOOP", symbol, candidate, train_stats, test_stats, proven, reasons, fee_pct)
-
-
-def _select_grid_profile(symbol: str, train: pd.DataFrame, test: pd.DataFrame, fee_pct: float) -> dict[str, Any]:
-    train_results = [
-        (candidate, _grid_stats(train, candidate, fee_pct))
-        for candidate in GRID_CANDIDATES
-    ]
-    candidate, train_stats = max(train_results, key=lambda item: _selection_score(item[1]))
-    test_stats = _grid_stats(test, candidate, fee_pct)
-    proven, reasons = _proof_decision(train_stats, test_stats, max_drawdown_pct=12.0)
-    return _profile_row("GRID", symbol, candidate, train_stats, test_stats, proven, reasons, fee_pct)
 
 
 def _rolling_loop(candles: pd.DataFrame, candidate: LoopCandidate, fee_pct: float) -> dict[str, Any]:
@@ -169,35 +133,6 @@ def _simulate_loop_window(candles: pd.DataFrame, candidate: LoopCandidate, fee_p
         "return_pct": round(final_return, 4),
         "max_drawdown_pct": round(minimum_return, 4),
         "cycles": int(active["grid"]["cycles"]),
-    }
-
-
-def _grid_stats(candles: pd.DataFrame, candidate: GridCandidate, fee_pct: float) -> dict[str, Any]:
-    result = rolling_backtest_grid(
-        candles,
-        preset=GridPreset(candidate.name, candidate.lower_pct, candidate.upper_pct, candidate.levels),
-        investment=1000.0,
-        fee_pct=fee_pct,
-        hold_days=float(candidate.hold_days),
-        step_days=float(candidate.hold_days),
-        launch_filter=candidate.launch_filter,
-        filter_lookback_days=float(candidate.lookback_days),
-        stop_loss_pct=candidate.stop_loss_pct,
-        take_profit_pct=candidate.take_profit_pct,
-    )
-    if result.get("status") != "ok":
-        return _summarize_returns([], [], [], candidate.hold_days)
-    return {
-        "starts": int(result["starts"]),
-        "win_rate_pct": float(result["win_rate_pct"]),
-        "avg_return_pct": float(result["avg_return_pct"]),
-        "avg_win_pct": max(float(result["avg_return_pct"]), 0.0),
-        "avg_loss_pct": min(float(result["p10_return_pct"]), 0.0),
-        "profit_factor": _estimated_profit_factor(result),
-        "worst_return_pct": float(result["worst_return_pct"]),
-        "worst_drawdown_pct": float(result["worst_max_drawdown_pct"]),
-        "avg_cycles": float(result["avg_cycles"]),
-        "monthly_pct": float(result["avg_monthly_pct"]),
     }
 
 
@@ -269,15 +204,6 @@ def _summarize_returns(returns: list[float], drawdowns: list[float], cycles: lis
     }
 
 
-def _estimated_profit_factor(result: dict[str, Any]) -> float:
-    win_rate = float(result.get("win_rate_pct", 0.0)) / 100
-    avg_return = float(result.get("avg_return_pct", 0.0))
-    best = max(float(result.get("best_return_pct", 0.0)), 0.0)
-    loss = abs(min(float(result.get("p10_return_pct", 0.0)), -0.01))
-    estimated_win = max(best * 0.5, avg_return, 0.01)
-    return round((win_rate * estimated_win) / max((1 - win_rate) * loss, 0.01), 2)
-
-
 def _selection_score(stats: dict[str, Any]) -> tuple[float, float, float, int]:
     starts = int(stats.get("starts", 0))
     eligible = 1.0 if starts >= 8 and float(stats.get("avg_return_pct", 0.0)) > 0 else 0.0
@@ -304,7 +230,7 @@ def _proof_decision(train: dict[str, Any], test: dict[str, Any], max_drawdown_pc
 def _profile_row(
     bot: str,
     symbol: str,
-    candidate: LoopCandidate | GridCandidate,
+    candidate: LoopCandidate,
     train: dict[str, Any],
     test: dict[str, Any],
     proven: bool,
@@ -341,13 +267,12 @@ def _load_candles(path: Path) -> pd.DataFrame:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Build adaptive GRID and LOOP proof registry.")
+    parser = argparse.ArgumentParser(description="Build the adaptive LOOP proof registry.")
     parser.add_argument("--cache-dir", default="data/backtests")
     parser.add_argument("--output", default="adaptive_proof_registry.json")
     parser.add_argument("--loop-fee-pct", type=float, default=0.5)
-    parser.add_argument("--grid-fee-pct", type=float, default=0.25)
     args = parser.parse_args()
-    registry = build_registry(Path(args.cache_dir), Path(args.output), args.loop_fee_pct, args.grid_fee_pct)
+    registry = build_registry(Path(args.cache_dir), Path(args.output), args.loop_fee_pct)
     proven = [row for row in registry["profiles"] if row["status"] == "Proven"]
     print(f"profiles={len(registry['profiles'])}")
     print(f"proven={len(proven)}")

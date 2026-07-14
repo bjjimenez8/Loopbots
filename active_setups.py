@@ -102,10 +102,7 @@ def _setup_from_opportunity(opportunity: dict[str, Any], now: str) -> dict[str, 
     strategy = str(opportunity.get("strategy", "")).upper()
     pair = str(opportunity.get("pair", ""))
     entry_price = _entry_price(opportunity, fields)
-    if strategy == "GRID":
-        take_profit = entry_price * (1 + (_percent(fields.get("Take profit")) or 0) / 100) if entry_price is not None else None
-    else:
-        take_profit = _price(fields.get("Take profit"))
+    take_profit = _price(fields.get("Take profit"))
     stop_price = _price(fields.get("Stop loss")) or _price(fields.get("Safety exit / stop guidance")) or _stop_from_pct(entry_price, fields.get("Stop loss"))
     if take_profit is None and entry_price is not None:
         take_profit = entry_price * (1 + (_percent(fields.get("Take profit")) or 0) / 100)
@@ -201,8 +198,6 @@ def _monitor_setup(setup: dict[str, Any], candles: pd.DataFrame) -> dict[str, An
     drawdown_from_high_pct = ((close / high_water) - 1) * 100 if high_water > 0 else 0.0
     stop_distance_pct = ((close / stop) - 1) * 100 if stop and stop > 0 else 0.0
     tp_distance_pct = ((tp / close) - 1) * 100 if tp and close > 0 else 0.0
-    strategy = str(setup.get("strategy", "")).upper()
-
     action: RecommendedAction = "HOLD"
     health = "Healthy"
     guidance = "Keep running."
@@ -225,10 +220,6 @@ def _monitor_setup(setup: dict[str, Any], candles: pd.DataFrame) -> dict[str, An
     elif drawdown_from_high_pct <= -3.5 or (stop_distance_pct and stop_distance_pct <= 0.6):
         action, health = "EXIT", "Exit Suggested"
         guidance = "Setup is weakening near the protection line. Consider exiting before loss expands."
-    elif strategy == "GRID" and drawdown_from_high_pct <= -2.0:
-        action, health = "Monitor"
-        guidance = "Grid is pulling back. Keep running only while price stays inside the planned range."
-
     return {
         **setup,
         "current_price": close,

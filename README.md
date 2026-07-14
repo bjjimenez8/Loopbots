@@ -63,40 +63,7 @@ It also sends a small morning crypto brief every day at `8:00 AM` Pacific with a
 
 It also starts a local paper-trading dashboard at `http://127.0.0.1:3000` so you can compare the alerts against what Bitsgap would have done.
 
-## GRID Bots
-
-Loopbots also has a live Hot GRID watch feature for Kraken `USD` and `USDC` pairs.
-
-GRID alerts are manual Bitsgap setup alerts. The bot does not create the bot for you. It auto-discovers researched hot coins, checks live volume/volatility/sideways quality, and sends the fields needed to create a GRID bot with Bitsgap stop loss and take profit enabled:
-
-- `GRID BOT ENTRY`: coin, exchange, low price, high price, grid levels, rough grid step, order size currency, trailing up, pump protection, trailing down, stop loss, and take profit.
-
-GRID bots do not send separate exit alerts. Bitsgap's GRID stop loss and take profit settings are included in the entry alert. LOOP bots still use separate exit alerts.
-
-GRID alerts are also paper-tracked internally. After a `GRID BOT ENTRY`, Loopbots watches future GRID candles and silently records a paper `GRID_TAKE_PROFIT` or `GRID_STOP_LOSS` when the alert's TP or SL price is touched. These paper closes are for stats only and do not send Telegram exit alerts.
-
-Current GRID research profiles are watch candidates, not proven strategies:
-
-| Coin | Quote | Range | Levels | Legacy WR | Proof status | Filter |
-| --- | --- | ---: | ---: | ---: | --- | --- |
-| `PEPE` | `USD` | -8% / +50% | 10 | 83.33% | Needs stronger proof | strict sideways |
-| `JTO` | `USD` | -14% / +50% | 20 | 75.00% | Needs stronger proof | sideways |
-| `INJ` | `USD` | -8% / +50% | 10 | 63.16% | Needs stronger proof | sideways |
-| `XCN` | `USD` | -8% / +35% | 10 | 72.22% | Needs stronger proof | sideways |
-| `ETH` | `USDC` | -5% / +50% | 10 | 63.33% | Needs stronger proof | strict sideways |
-| `IDEX` | `USD` | -10% / +50% | 10 | 100% | Experimental small sample | sideways |
-
-The July 2026 proof audit used 730 days of hourly history, non-overlapping runs, a train/test split, and a 0.25% per-order Kraken maker-fee assumption. No GRID or LOOP setup met the full Ready Now standard. The old PEPE/JTO studies used only 12 starts and a lower fee assumption, so they remain visible for research but cannot become Ready Now.
-
-The scanner can also auto-add new Kraken `USD`/`USDC` coins as `Auto Hot GRID` candidates when they pass stricter live filters. Auto-added coins use `-8% / +35%`, `10` levels, `+8%` take profit, `-5%` stop loss, and strict-sideways filtering. These are opportunity alerts, not per-coin proven profiles yet.
-
-Experimental GRID profiles are watched and paper-tracked automatically, but should start small until live paper and real Bitsgap results confirm the backtest.
-
-If no LOOP or GRID alerts fire, Loopbots can send one daily `BOT STATUS` message after `8:00 PM` Pacific showing that it is running and which coins are closest.
-
-The GRID feature only alerts on filtered sideways setups that were profitable in research. It is not guaranteed profit, and live Bitsgap results can differ from the local backtester.
-
-See [docs/grid-research.md](docs/grid-research.md) for the live watchlist, alert format, filter rules, and honest profitability notes.
+If no LOOP alerts fire, Loopbots can send one daily `BOT STATUS` message after `8:00 PM` Pacific showing that it is running and which coins are closest.
 
 ## Alert Format
 
@@ -140,10 +107,7 @@ Paper tracking uses the same alerts the bot sends:
 - `ENTER` opens a paper trade.
 - Take profit closes it as a paper win without sending a separate Telegram exit.
 - Safety exit closes it as a paper loss and sends the normal `EXIT` alert.
-- `GRID BOT ENTRY` opens a GRID paper trade.
-- GRID take profit or stop loss closes the GRID paper trade silently for stats.
-
-Open `http://127.0.0.1:3000/loop` while the bot is running to see LOOP entry readiness scores, status, reason, active LOOP alerts, closed LOOP paper trades, LOOP wins/losses, win rate, estimated net return after the fee assumption, average net per trade, average hold time, and best/worst symbols. Open `http://127.0.0.1:3000/grid` for GRID scanned setups, readiness scores, active GRID paper trades, closed GRID paper trades, GRID win rate, and GRID net return.
+Open `http://127.0.0.1:3000/loop` while the bot is running to see LOOP entry readiness scores, status, reason, active LOOP alerts, closed LOOP paper trades, LOOP wins/losses, win rate, estimated net return after the fee assumption, average net per trade, average hold time, and best/worst symbols.
 
 ## Hetzner Auto Deploy
 
@@ -225,7 +189,7 @@ timestamp,open,high,low,close,volume
 
 The backtester currently simulates entries, take-profit exits, and safety exits using the same strategy module as the live scanner.
 
-`run_backtest.py` also estimates LOOP-style grid cycles while an alert is active. It reports the normal entry-to-exit return separately from estimated grid profit, so you can compare a simple trade result against a more Bitsgap-like LOOP result.
+`run_backtest.py` also estimates completed LOOP cycles while an alert is active. It reports price movement separately from estimated cycle profit so you can compare the components of a Bitsgap-style LOOP result.
 
 ### Adaptive historical proof
 
@@ -235,7 +199,7 @@ Build the versioned proof registry from the cached two-year hourly history with:
 python adaptive_proof.py
 ```
 
-The builder selects settings on the first half of each coin's history and checks them on the untouched second half using non-overlapping starts and realistic fee assumptions. A live GRID or LOOP setup is never marked Ready unless its exact symbol, timeframe, distances, order count, target, and stop match a `Proven` registry row. Missing, malformed, weak, or stale proof fails closed. Historical proof is evidence of a past edge, not a guarantee of future profit.
+The builder selects settings on the first half of each coin's history and checks them on the untouched second half using non-overlapping starts and realistic fee assumptions. A live LOOP setup is never marked Ready unless its exact symbol, timeframe, distances, order count, target, and stop match a `Proven` registry row. Missing, malformed, weak, or stale proof fails closed. Historical proof is evidence of a past edge, not a guarantee of future profit.
 
 For exchange-based history testing, `run_backtest.py` supports splitting the live universe from the history source. That means you can keep `Kraken` as the real trading exchange while using deeper public candles from another exchange such as `OKX`:
 

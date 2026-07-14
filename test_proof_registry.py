@@ -54,28 +54,5 @@ class AdaptiveProofRegistryTests(unittest.TestCase):
             self.assertTrue(registry.loop_proof_for(live))
             self.assertEqual(registry.loop_proof_for({**live, "take_profit_pct": 20.0}), {})
 
-    def test_needs_stronger_proof_never_matches(self) -> None:
-        with TemporaryDirectory() as directory:
-            path = Path(directory) / "proof.json"
-            path.write_text(
-                json.dumps(
-                    {
-                        "version": PROOF_MODEL,
-                        "profiles": [
-                            {
-                                "bot": "GRID",
-                                "symbol": "DOGE/USDT",
-                                "status": "Needs stronger proof",
-                                "settings": {},
-                            }
-                        ],
-                    }
-                ),
-                encoding="utf-8",
-            )
-            registry = AdaptiveProofRegistry(path)
-            self.assertEqual(registry.grid_proof_for({"symbol": "DOGE/USDT"}), {})
-
-
 if __name__ == "__main__":
     unittest.main()

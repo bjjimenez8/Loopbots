@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from telegram import Bot
 
@@ -31,24 +30,6 @@ class TelegramAlertClient:
             f"Order Count: {loop_plan.get('order_count', 'n/a')}\n"
             f"Stop Loss: {signal.safety_exit_price}\n"
             f"Take Profit: {signal.take_profit_price}"
-        )
-        await self._send(message)
-
-    async def send_grid_alert(self, grid_plan: dict[str, Any]) -> None:
-        message = (
-            "GRID BOT ENTRY\n"
-            f"Coin: {grid_plan.get('symbol', 'n/a')}\n"
-            f"Exchange: {grid_plan.get('exchange', 'Kraken')}\n"
-            f"Low Price: {grid_plan.get('low_price', 'n/a')}\n"
-            f"High Price: {grid_plan.get('high_price', 'n/a')}\n"
-            f"Grid Levels: {grid_plan.get('levels', 'n/a')}\n"
-            f"Grid Step: Roughly {grid_plan.get('grid_step_pct', 'n/a')}%\n"
-            f"Order Size Currency: {grid_plan.get('order_size_currency', 'n/a')}\n"
-            f"Trailing Up: {grid_plan.get('trailing_up', 'On')}\n"
-            f"Pump Protection: {grid_plan.get('pump_protection', 'On')}\n"
-            f"Trailing Down: {grid_plan.get('trailing_down', 'Off')}\n"
-            f"Stop Loss: On ({grid_plan.get('stop_loss_pct', 'n/a')}%)\n"
-            f"Take Profit: On ({grid_plan.get('take_profit_pct', 'n/a')}%)"
         )
         await self._send(message)
 

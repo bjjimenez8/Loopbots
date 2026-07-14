@@ -33,7 +33,6 @@ class PaperDashboardServer:
         self,
         tracker: PaperTracker,
         config: DashboardConfig,
-        grid_snapshot_provider: Callable[[], dict[str, Any]] | None = None,
         loop_details_provider: Callable[[], dict[str, Any]] | None = None,
         research_provider: Callable[[], dict[str, Any]] | None = None,
         opportunity_provider: Callable[[dict[str, list[str]]], dict[str, Any]] | None = None,
@@ -47,7 +46,6 @@ class PaperDashboardServer:
         self.tracker = tracker
         self.config = config
         DASHBOARD_TIMEZONE = config.timezone
-        self.grid_snapshot_provider = grid_snapshot_provider
         self.loop_details_provider = loop_details_provider
         self.research_provider = research_provider
         self.opportunity_provider = opportunity_provider
@@ -61,7 +59,6 @@ class PaperDashboardServer:
 
     def snapshot(
         self,
-        include_grid: bool = True,
         include_loop: bool = True,
         include_research: bool = False,
         opportunity_query: dict[str, list[str]] | None = None,
@@ -70,8 +67,6 @@ class PaperDashboardServer:
         include_opportunity_paper: bool = False,
     ) -> dict[str, Any]:
         payload = self.tracker.snapshot()
-        if include_grid and self.grid_snapshot_provider is not None:
-            payload["grid_stats"] = self.grid_snapshot_provider()
         if include_loop and self.loop_details_provider is not None:
             payload["loop_details"] = self.loop_details_provider()
         if include_research and self.research_provider is not None:
@@ -102,34 +97,31 @@ class PaperDashboardServer:
                     self._send_json(dashboard.snapshot())
                     return
                 if path == "/api/research":
-                    self._send_json(dashboard.snapshot(include_grid=False, include_loop=False, include_research=True))
+                    self._send_json(dashboard.snapshot(include_loop=False, include_research=True))
                     return
                 if path == "/api/opportunities":
-                    self._send_json(dashboard.snapshot(include_grid=False, include_loop=False, opportunity_query=query, include_active_setups=True, include_opportunity_paper=True))
+                    self._send_json(dashboard.snapshot(include_loop=False, opportunity_query=query, include_active_setups=True, include_opportunity_paper=True))
                     return
                 if path == "/api/active-setups":
-                    self._send_json(dashboard.snapshot(include_grid=False, include_loop=False, include_active_setups=True))
+                    self._send_json(dashboard.snapshot(include_loop=False, include_active_setups=True))
                     return
                 if path == "/api/opportunity-paper":
-                    self._send_json(dashboard.snapshot(include_grid=False, include_loop=False, include_opportunity_paper=True))
+                    self._send_json(dashboard.snapshot(include_loop=False, include_opportunity_paper=True))
                     return
                 if path == "/api/backtest":
-                    self._send_json(dashboard.snapshot(include_grid=False, include_loop=False, backtest_query=query))
+                    self._send_json(dashboard.snapshot(include_loop=False, backtest_query=query))
                     return
                 if path == "/opportunities":
-                    self._send_html(render_opportunities_dashboard(dashboard.snapshot(include_grid=False, include_loop=False, opportunity_query=query, include_active_setups=True, include_opportunity_paper=True), refresh_seconds))
+                    self._send_html(render_opportunities_dashboard(dashboard.snapshot(include_loop=False, opportunity_query=query, include_active_setups=True, include_opportunity_paper=True), refresh_seconds))
                     return
                 if path in {"/", "/backtest"}:
-                    self._send_html(render_backtest_dashboard(dashboard.snapshot(include_grid=False, include_loop=False, backtest_query=query), refresh_seconds))
+                    self._send_html(render_backtest_dashboard(dashboard.snapshot(include_loop=False, backtest_query=query), refresh_seconds))
                     return
                 if path in {"/paper", "/loop"}:
-                    self._send_html(render_loop_dashboard(dashboard.snapshot(include_grid=False), refresh_seconds))
-                    return
-                if path == "/grid":
-                    self._send_html(render_grid_dashboard(dashboard.snapshot(include_loop=False), refresh_seconds))
+                    self._send_html(render_loop_dashboard(dashboard.snapshot(), refresh_seconds))
                     return
                 if path == "/research":
-                    self._send_html(render_research_dashboard(dashboard.snapshot(include_grid=False, include_loop=False, include_research=True), refresh_seconds))
+                    self._send_html(render_opportunities_dashboard(dashboard.snapshot(include_loop=False, opportunity_query=query, include_active_setups=True, include_opportunity_paper=True), refresh_seconds))
                     return
                 self.send_error(404, "Not found")
 
@@ -191,7 +183,7 @@ def _opportunities_redirect(form: dict[str, list[str]]) -> str:
     if _form_value(form, "setup_id", ""):
         return "/opportunities#saved-bots"
     paper = _form_value(form, "paper", "")
-    if paper in {"grid", "loop"}:
+    if paper == "loop":
         return "/opportunities?" + urlencode({"paper": paper}) + "#paper-performance"
     return "/opportunities"
 
@@ -330,8 +322,6 @@ def render_loop_dashboard(snapshot: dict[str, Any], refresh_seconds: int) -> str
     <nav>
       <a href="/opportunities">Opportunities</a>
       <a class="active" href="/loop">LOOP Bots</a>
-      <a href="/grid">GRID Bots</a>
-      <a href="/research">Research</a>
       <a href="/backtest">Backtest Lab</a>
     </nav>
 
@@ -370,174 +360,7 @@ def render_loop_dashboard(snapshot: dict[str, Any], refresh_seconds: int) -> str
       <h2>Closed Paper Trades</h2>
       <table>
         <thead>
-          <tr><th>Coin</th><th>Result</th><th>Preset</th><th>Entry</th><th>Exit</th><th>Grid</th><th>Net</th><th>Hold</th><th>Closed</th><th>Reason</th></tr>
-        </thead>
-        <tbody>{closed_rows}</tbody>
-      </table>
-    </section>
-  </main>
-  {_browser_timezone_script()}
-</body>
-</html>"""
-
-
-def render_grid_dashboard(snapshot: dict[str, Any], refresh_seconds: int) -> str:
-    grid_stats = snapshot.get("grid_stats", {})
-    scanned_rows = "".join(_grid_scan_row(row) for row in grid_stats.get("scanned", [])) or _empty_row(6, "No GRID scan details loaded yet.")
-    active_rows = "".join(_grid_active_row(row) for row in grid_stats.get("active_trades", [])) or _empty_row(8, "No active GRID paper trades.")
-    closed_rows = "".join(_grid_closed_row(row) for row in grid_stats.get("closed_trades", [])) or _empty_row(9, "No closed GRID paper trades yet.")
-
-    return f"""<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="refresh" content="{int(refresh_seconds)}">
-  <title>GRID Paper Dashboard</title>
-  <style>
-    :root {{
-      color-scheme: dark;
-      --bg: #0f1117;
-      --panel: #171b24;
-      --panel-2: #1f2530;
-      --line: #2c3442;
-      --text: #edf2f7;
-      --muted: #9aa4b2;
-      --good: #25d695;
-      --bad: #ff6875;
-      --accent: #4da3ff;
-    }}
-    * {{ box-sizing: border-box; }}
-    body {{
-      margin: 0;
-      background: var(--bg);
-      color: var(--text);
-      font-family: Arial, Helvetica, sans-serif;
-      line-height: 1.4;
-    }}
-    main {{
-      width: min(1180px, calc(100vw - 32px));
-      margin: 24px auto 40px;
-    }}
-    header {{
-      display: flex;
-      justify-content: space-between;
-      gap: 16px;
-      align-items: flex-end;
-      margin-bottom: 18px;
-    }}
-    h1, h2 {{ margin: 0; }}
-    h1 {{ font-size: 28px; }}
-    h2 {{ font-size: 18px; margin-bottom: 10px; }}
-    nav {{ display: flex; gap: 8px; margin: 0 0 18px; }}
-    nav a {{
-      color: var(--text);
-      text-decoration: none;
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 9px 13px;
-      font-weight: 700;
-    }}
-    nav a.active {{ background: var(--accent); color: #07111f; border-color: var(--accent); }}
-    .muted {{ color: var(--muted); }}
-    .grid {{
-      display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 12px;
-      margin-bottom: 16px;
-    }}
-    .card, section {{
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: 8px;
-    }}
-    .card {{ padding: 14px; }}
-    .label {{ color: var(--muted); font-size: 12px; text-transform: uppercase; }}
-    .value {{ font-size: 24px; font-weight: 700; margin-top: 4px; }}
-    .good {{ color: var(--good); }}
-    .bad {{ color: var(--bad); }}
-    section {{ padding: 16px; margin-top: 16px; overflow-x: auto; }}
-    table {{ width: 100%; border-collapse: collapse; min-width: 760px; }}
-    th, td {{
-      text-align: left;
-      border-bottom: 1px solid var(--line);
-      padding: 10px 8px;
-      white-space: nowrap;
-      font-size: 14px;
-    }}
-    th {{ color: var(--muted); font-size: 12px; text-transform: uppercase; }}
-    tr:last-child td {{ border-bottom: 0; }}
-    .pill {{
-      display: inline-block;
-      padding: 3px 8px;
-      border-radius: 999px;
-      background: var(--panel-2);
-      color: var(--text);
-      font-size: 12px;
-    }}
-    @media (max-width: 860px) {{
-      header {{ display: block; }}
-      .grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
-    }}
-    @media (max-width: 520px) {{
-      .grid {{ grid-template-columns: 1fr; }}
-    }}
-  </style>
-</head>
-<body>
-  <main>
-    <header>
-      <div>
-        <h1>GRID Paper</h1>
-        <div class="muted">Auto-refreshes every {int(refresh_seconds)} seconds. GRID exits are paper-only and do not send Telegram exit alerts.</div>
-      </div>
-      <div class="muted">Generated {_local_time_html(snapshot["generated_at"], "datetime")}</div>
-    </header>
-    <nav>
-      <a href="/opportunities">Opportunities</a>
-      <a href="/loop">LOOP Bots</a>
-      <a class="active" href="/grid">GRID Bots</a>
-      <a href="/research">Research</a>
-      <a href="/backtest">Backtest Lab</a>
-    </nav>
-
-    <div class="grid">
-      {_metric("Entries", grid_stats.get("entries", 0), "GRID paper entries")}
-      {_metric("Closed", grid_stats.get("closed", 0), "TP/SL paper closes")}
-      {_metric("Win Rate", _pct(grid_stats.get("win_rate_pct", 0.0)), "TP / closed GRID")}
-      {_metric("Net Return", _signed_pct(grid_stats.get("net_return_pct", 0.0)), "Paper TP/SL net", grid_stats.get("net_return_pct", 0.0))}
-      {_metric("Avg Net/Trade", _signed_pct(grid_stats.get("avg_net_return_pct", 0.0)), "Closed GRID average", grid_stats.get("avg_net_return_pct", 0.0))}
-      {_metric("Active", grid_stats.get("active", 0), "Open GRID paper")}
-      {_metric("Wins", grid_stats.get("wins", 0), "GRID TP closes")}
-      {_metric("Losses", grid_stats.get("losses", 0), "GRID SL closes")}
-    </div>
-
-    <section>
-      <h2>Scanned GRID Setups</h2>
-      <table>
-        <thead>
-          <tr><th>Coin</th><th>Preset</th><th>Type</th><th>Score</th><th>Status</th><th>Price</th><th>Hist. Monthly</th><th>Cooldown</th><th>Reason</th></tr>
-        </thead>
-        <tbody>{scanned_rows}</tbody>
-      </table>
-    </section>
-
-    <section>
-      <h2>Active GRID Paper</h2>
-      <table>
-        <thead>
-          <tr><th>Coin</th><th>Preset</th><th>Entry</th><th>TP</th><th>SL</th><th>Grid Step</th><th>Levels</th><th>Opened</th></tr>
-        </thead>
-        <tbody>{active_rows}</tbody>
-      </table>
-    </section>
-
-    <section>
-      <h2>Closed GRID Paper</h2>
-      <table>
-        <thead>
-          <tr><th>Coin</th><th>Result</th><th>Preset</th><th>Entry</th><th>Exit</th><th>Net</th><th>Grid Step</th><th>Closed</th><th>Reason</th></tr>
+          <tr><th>Coin</th><th>Result</th><th>Preset</th><th>Entry</th><th>Exit</th><th>Cycles</th><th>Net</th><th>Hold</th><th>Closed</th><th>Reason</th></tr>
         </thead>
         <tbody>{closed_rows}</tbody>
       </table>
@@ -553,16 +376,14 @@ def _render_ready_right_now_dashboard(snapshot: dict[str, Any], payload: dict[st
     active_setups = snapshot.get("active_setups", {})
     generated_at = payload.get("generated_at", snapshot.get("generated_at", ""))
     ready = [row for row in opportunities if row.get("status") == "Ready Now"]
-    grid_ready = [row for row in ready if str(row.get("strategy", "")).upper() == "GRID"]
     loop_ready = [row for row in ready if str(row.get("strategy", "")).upper() == "LOOP"]
-    grid_cards = "".join(_ready_setup_card(row) for row in grid_ready) or _no_ready_card("GRID")
     loop_cards = "".join(_ready_setup_card(row) for row in loop_ready) or _no_ready_card("LOOP")
     active_cards = _existing_bot_action_cards(active_setups)
     filters = payload.get("filters", {})
     paper_cards = _opportunity_paper_cards(snapshot.get("opportunity_paper", {}), filters)
     quick_tabs = _opportunities_quick_tabs(filters)
     no_ready = ""
-    if not grid_ready and not loop_ready:
+    if not loop_ready:
         no_ready = '<div class="empty-ready">No ready coins right now. Next scan in 15 minutes.</div>'
     return f"""<!doctype html>
 <html lang="en">
@@ -1032,7 +853,7 @@ def _render_ready_right_now_dashboard(snapshot: dict[str, Any], payload: dict[st
     <header>
       <div>
         <h1>Ready Right Now</h1>
-        <div class="subtitle">Kraken-only manual Bitsgap GRID and LOOP setups. Copy the settings and manage them manually in Bitsgap.</div>
+        <div class="subtitle">Kraken-only manual Bitsgap LOOP setups. Copy the settings and manage them manually in Bitsgap.</div>
       </div>
       <div class="top-actions">
         <div class="updated">Updated <span data-live-clock>{_escape(_short_time(generated_at))}</span></div>
@@ -1040,11 +861,6 @@ def _render_ready_right_now_dashboard(snapshot: dict[str, Any], payload: dict[st
     </header>
     {quick_tabs}
     {no_ready}
-    <section id="grid-ready" class="section">
-      <div class="section-head"><div class="section-title"><h2>GRID Bots Ready Now</h2></div><div class="section-meta"><span class="count-pill">{len(grid_ready)} ready</span><a class="top-link" href="/opportunities#top" aria-label="Back to top">↑</a></div></div>
-      {_section_horizon_tabs("grid-ready", filters)}
-      <div class="ready-grid">{grid_cards}</div>
-    </section>
     <section id="loop-ready" class="section">
       <div class="section-head"><div class="section-title"><h2>LOOP Bots Ready Now</h2></div><div class="section-meta"><span class="count-pill">{len(loop_ready)} ready</span><a class="top-link" href="/opportunities#top" aria-label="Back to top">↑</a></div></div>
       {_section_horizon_tabs("loop-ready", filters)}
@@ -1122,21 +938,7 @@ def _ready_settings(row: dict[str, Any]) -> list[tuple[str, Any]]:
     fields = row.get("bitsgap_fields", {})
     if not isinstance(fields, dict):
         fields = {}
-    strategy = str(row.get("strategy", "")).upper()
     term = _bitsgap_term(row)
-    if strategy == "GRID":
-        return [
-            ("Bitsgap preset", term),
-            ("Low price", fields.get("Low price", "n/a")),
-            ("High price", fields.get("High price", "n/a")),
-            ("Grid levels", fields.get("Grid levels", "n/a")),
-            ("Grid step", fields.get("Grid step", "n/a")),
-            ("Take profit", fields.get("Take profit", "n/a")),
-            ("Stop loss", fields.get("Stop loss", "n/a")),
-            ("Trailing up", "On"),
-            ("Trailing down", "Off"),
-            ("Pump protection", "On"),
-        ]
     entry = _entry_display(row)
     stop_loss = _loop_stop_loss_value(fields)
     take_profit = fields.get("Take profit", "n/a")
@@ -1175,8 +977,6 @@ def _deploy_action(row: dict[str, Any]) -> str:
         return "READY TO BE DEPLOYED"
     if strategy == "LOOP" and score >= 35:
         return "READY TO BE DEPLOYED"
-    if strategy == "GRID" and score >= 30:
-        return "READY TO BE DEPLOYED"
     return "AVOID"
 
 
@@ -1184,11 +984,7 @@ def _has_copy_ready_settings(row: dict[str, Any]) -> bool:
     fields = row.get("bitsgap_fields", {})
     if not isinstance(fields, dict):
         return False
-    strategy = str(row.get("strategy", "")).upper()
-    if strategy == "GRID":
-        required = ["Low price", "High price", "Grid levels", "Grid step", "Take profit", "Stop loss"]
-    else:
-        required = ["Order distance", "Order count", "Take profit", "Stop loss"]
+    required = ["Order distance", "Order count", "Take profit", "Stop loss"]
     for key in required:
         value = _loop_stop_loss_value(fields) if key == "Stop loss" else fields.get(key)
         if value in {"", None, "n/a", "Needs live price"}:
@@ -1203,24 +999,7 @@ def _short_ready_reason(row: dict[str, Any]) -> str:
     fields = row.get("bitsgap_fields", {})
     if not isinstance(fields, dict):
         fields = {}
-    if strategy == "GRID":
-        return _grid_ready_reason(score, term, fields)
     return _loop_ready_reason(score, term, fields)
-
-
-def _grid_ready_reason(score: int, term: str, fields: dict[str, Any]) -> str:
-    grid_step = str(fields.get("Grid step", "") or "").strip()
-    stop_loss = str(fields.get("Stop loss", "") or "").strip()
-    take_profit = str(fields.get("Take profit", "") or "").strip()
-    if score >= 85:
-        return f"Strong {term} range. {grid_step} steps with TP and SL already mapped."
-    if score >= 70:
-        return f"Clean {term} grid range. Price has room before the TP area."
-    if "at" in stop_loss:
-        return f"Usable {term} range. Keep the mapped stop active if the range breaks."
-    if "at" in take_profit:
-        return f"Range setup is usable. TP is mapped, but keep size controlled."
-    return f"Usable {term} grid setup with copy-ready range settings."
 
 
 def _loop_ready_reason(score: int, term: str, fields: dict[str, Any]) -> str:
@@ -1357,6 +1136,7 @@ def _no_ready_card(strategy: str) -> str:
 
 def _existing_bot_action_cards(active_setups: dict[str, Any]) -> str:
     active = active_setups.get("active", []) if isinstance(active_setups, dict) else []
+    active = [setup for setup in active if str(setup.get("strategy", "")).upper() == "LOOP"]
     if not active:
         return '<div class="empty-ready">No saved bots being tracked right now.</div>'
     return "".join(_existing_bot_action_card(setup) for setup in active)
@@ -1398,8 +1178,6 @@ def _saved_bot_action(setup: dict[str, Any]) -> str:
 
 def _remove_bot_label(setup: dict[str, Any]) -> str:
     strategy = str(setup.get("strategy", "")).upper()
-    if strategy == "GRID":
-        return "REMOVE GRID BOT"
     if strategy == "LOOP":
         return "REMOVE LOOP BOT"
     return "REMOVE BOT"
@@ -1408,1000 +1186,19 @@ def _remove_bot_label(setup: dict[str, Any]) -> str:
 def render_opportunities_dashboard(snapshot: dict[str, Any], refresh_seconds: int) -> str:
     payload = snapshot.get("opportunities", {})
     return _render_ready_right_now_dashboard(snapshot, payload)
-    opportunities = payload.get("opportunities", [])
-    filters = payload.get("filters", {})
-    counts = payload.get("counts", {})
-    active_setups = snapshot.get("active_setups", {})
-    opportunity_paper = snapshot.get("opportunity_paper", {})
-    usable = [row for row in opportunities if row.get("status") == "Ready Now"]
-    visible_opportunities = usable[:6]
-    cards = "".join(_opportunity_card(row, filters) for row in visible_opportunities) or '<div class="empty-card">No usable setup right now. Try the other strategy or time horizon.</div>'
-    active_cards = _active_setup_cards(active_setups, filters)
-    paper_cards = _opportunity_paper_cards(opportunity_paper, filters)
-    ready_count = int(counts.get("ready_now", 0) or 0)
-    wait_count = int(counts.get("wait", 0) or 0)
-    avoid_count = int(counts.get("avoid", 0) or 0)
-    return f"""<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Bitsgap Opportunities</title>
-  <style>
-    :root {{
-      color-scheme: light;
-      --bg: #f7f9fc;
-      --panel: #ffffff;
-      --panel-2: #f9fafb;
-      --line: #e2e8f0;
-      --text: #101828;
-      --muted: #667085;
-      --good: #079455;
-      --bad: #d92d20;
-      --warn: #dc6803;
-      --accent: #0f9f5f;
-      --blue: #475467;
-      --shadow: 0 12px 30px rgba(16, 24, 40, 0.06);
-    }}
-    * {{ box-sizing: border-box; }}
-    body {{
-      margin: 0;
-      background: var(--bg);
-      color: var(--text);
-      font-family: Arial, Helvetica, sans-serif;
-      line-height: 1.4;
-    }}
-    .brand {{
-      display: flex;
-      align-items: center;
-      gap: 16px;
-      margin-bottom: 32px;
-    }}
-    .brand-mark {{
-      width: 46px;
-      height: 46px;
-      border-radius: 50%;
-      border: 5px solid var(--accent);
-      display: grid;
-      place-items: center;
-      color: var(--accent);
-      font-size: 22px;
-      font-weight: 900;
-    }}
-    .brand-name {{ font-size: 24px; font-weight: 900; letter-spacing: 0; }}
-    .brand-sub {{ font-size: 13px; color: var(--text); margin-top: -2px; }}
-    main {{
-      width: min(1040px, calc(100vw - 56px));
-      margin: 34px auto 44px;
-    }}
-    header {{
-      display: flex;
-      justify-content: space-between;
-      gap: 18px;
-      align-items: flex-start;
-      margin-bottom: 28px;
-    }}
-    h1, h2, h3 {{ margin: 0; letter-spacing: 0; }}
-    h1 {{ font-size: 31px; line-height: 1.15; }}
-    h2 {{ font-size: 18px; }}
-    .subtitle {{ margin-top: 8px; color: #101828; font-size: 17px; }}
-    .updated {{
-      display: flex;
-      gap: 9px;
-      align-items: center;
-      color: #101828;
-      white-space: nowrap;
-      font-size: 14px;
-    }}
-    .dot {{ width: 8px; height: 8px; border-radius: 999px; background: var(--accent); display: inline-block; }}
-    .panel {{
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: 12px;
-      box-shadow: var(--shadow);
-    }}
-    .filter-panel {{
-      display: grid;
-      grid-template-columns: 1fr 1.45fr 0.8fr;
-      gap: 18px;
-      padding: 18px;
-      align-items: stretch;
-      margin-bottom: 14px;
-    }}
-    .filter-group {{
-      border-right: 1px solid var(--line);
-      padding-right: 18px;
-    }}
-    .filter-group:last-child {{ border-right: 0; padding-right: 0; }}
-    .filter-title {{
-      font-size: 14px;
-      font-weight: 900;
-      margin-bottom: 12px;
-    }}
-    .tile-grid {{
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 8px;
-    }}
-    .tile-grid.three {{ grid-template-columns: repeat(3, minmax(0, 1fr)); }}
-    .filter-tile {{
-      min-height: 86px;
-      border: 1px solid var(--line);
-      border-radius: 9px;
-      display: grid;
-      place-items: center;
-      gap: 5px;
-      color: #344054;
-      text-decoration: none;
-      font-weight: 800;
-      font-size: 11px;
-      text-align: center;
-      padding: 10px 8px;
-      min-width: 0;
-    }}
-    .filter-tile span {{
-      min-width: 0;
-      overflow-wrap: anywhere;
-    }}
-    .filter-tile.active {{
-      border-color: #12b76a;
-      background: #ecfdf3;
-      color: #067647;
-    }}
-    .filter-icon {{ font-size: 23px; line-height: 1; }}
-    .tile-sub {{ color: var(--muted); font-size: 11px; font-weight: 700; }}
-    .exchange-card {{
-      min-height: 86px;
-      border: 1px solid var(--line);
-      border-radius: 9px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 14px;
-      font-weight: 900;
-    }}
-    .exchange-logo {{
-      width: 32px;
-      height: 32px;
-      border-radius: 999px;
-      background: #3f37ff;
-      color: white;
-      display: grid;
-      place-items: center;
-      font-size: 14px;
-      font-weight: 900;
-    }}
-    .muted {{ color: var(--muted); }}
-    .good {{ color: var(--good); }}
-    .bad {{ color: var(--bad); }}
-    .warn {{ color: var(--warn); }}
-    .status-badge {{
-      display: inline-block;
-      padding: 4px 9px;
-      border-radius: 999px;
-      font-size: 12px;
-      font-weight: 800;
-      border: 1px solid transparent;
-    }}
-    .status-ready {{
-      color: var(--good);
-      background: #ecfdf3;
-      border-color: #abefc6;
-    }}
-    .status-wait {{
-      color: var(--warn);
-      background: #fffaeb;
-      border-color: #fedf89;
-    }}
-    .status-avoid {{
-      color: var(--bad);
-      background: #fef3f2;
-      border-color: #fecdca;
-    }}
-    .list-toolbar {{
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      color: #344054;
-      margin: 18px 4px 14px;
-      font-size: 14px;
-    }}
-    .opportunity-list {{ display: grid; gap: 14px; }}
-    .opportunity-card {{
-      display: grid;
-      grid-template-columns: 220px minmax(320px, 1fr) 170px;
-      gap: 18px;
-      padding: 12px;
-      align-items: stretch;
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: 12px;
-      box-shadow: 0 10px 24px rgba(16, 24, 40, 0.05);
-    }}
-    .coin-cell {{
-      display: grid;
-      gap: 10px;
-      align-items: start;
-      padding: 10px 0 10px 4px;
-    }}
-    .pair {{ font-size: 24px; font-weight: 900; color: var(--text); }}
-    .subline {{ color: #475467; font-size: 13px; margin-top: 3px; }}
-    .meta-row {{ display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }}
-    .pill {{
-      display: inline-block;
-      padding: 4px 9px;
-      border-radius: 999px;
-      background: #f2f4f7;
-      color: var(--blue);
-      font-size: 12px;
-      font-weight: 700;
-    }}
-    .settings-cell {{
-      border-left: 1px solid var(--line);
-      padding-left: 18px;
-      display: grid;
-      align-content: center;
-      gap: 12px;
-    }}
-    .detail-grid {{
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 12px;
-    }}
-    .detail-label {{
-      color: var(--muted);
-      font-size: 12px;
-      font-weight: 700;
-    }}
-    .detail-value {{
-      color: var(--text);
-      font-size: 17px;
-      font-weight: 900;
-      margin-top: 2px;
-      white-space: normal;
-    }}
-    .market-panel {{
-      display: grid;
-      grid-template-columns: 170px minmax(180px, 1fr);
-      gap: 12px;
-      align-items: center;
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
-      padding: 11px 12px;
-    }}
-    .market-head {{
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 8px;
-      margin-bottom: 3px;
-    }}
-    .live-badge {{
-      display: inline-flex;
-      align-items: center;
-      gap: 5px;
-      border-radius: 999px;
-      background: #ecfdf3;
-      color: var(--good);
-      border: 1px solid #abefc6;
-      padding: 2px 7px;
-      font-size: 10px;
-      font-weight: 900;
-      white-space: nowrap;
-      animation: livePulse 2.8s ease-in-out infinite;
-    }}
-    .live-badge::before {{
-      content: "";
-      width: 6px;
-      height: 6px;
-      border-radius: 999px;
-      background: var(--good);
-    }}
-    @keyframes livePulse {{
-      0%, 100% {{ opacity: 1; box-shadow: 0 0 0 0 rgba(7, 148, 85, 0.18); }}
-      50% {{ opacity: 0.72; box-shadow: 0 0 0 5px rgba(7, 148, 85, 0); }}
-    }}
-    .market-price {{ font-size: 24px; font-weight: 900; color: var(--text); line-height: 1.05; }}
-    .market-meta {{ color: var(--muted); font-size: 12px; margin-top: 2px; }}
-    .sparkline {{
-      width: 100%;
-      height: 54px;
-      overflow: visible;
-    }}
-    .sparkline-line {{
-      fill: none;
-      stroke-width: 3;
-      stroke-linecap: round;
-      stroke-linejoin: round;
-    }}
-    .fields {{
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 8px;
-      white-space: normal;
-    }}
-    .fields div {{
-      background: #f9fafb;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      color: var(--muted);
-      padding: 5px 7px;
-      font-size: 12px;
-    }}
-    .fields strong {{ color: var(--text); }}
-    .help-icon {{
-      position: relative;
-      display: inline-grid;
-      place-items: center;
-      width: 13px;
-      height: 13px;
-      margin-left: 3px;
-      border-radius: 999px;
-      background: #eef4ff;
-      color: #344054;
-      font-size: 9px;
-      font-weight: 900;
-      cursor: help;
-      vertical-align: super;
-      line-height: 1;
-      top: -1px;
-    }}
-    .help-icon:hover::after {{
-      content: attr(data-tip);
-      position: absolute;
-      left: 50%;
-      bottom: calc(100% + 8px);
-      transform: translateX(-50%);
-      width: min(280px, 70vw);
-      padding: 9px 10px;
-      border-radius: 8px;
-      background: #101828;
-      color: #ffffff;
-      box-shadow: 0 12px 28px rgba(16, 24, 40, 0.22);
-      font-size: 12px;
-      font-weight: 700;
-      line-height: 1.35;
-      text-align: left;
-      z-index: 20;
-    }}
-    .setup-reason {{
-      color: var(--muted);
-      font-size: 13px;
-      line-height: 1.45;
-    }}
-    .action-box {{
-      border-radius: 12px;
-      border: 1px solid var(--line);
-      padding: 14px 12px;
-      display: grid;
-      align-content: center;
-      gap: 10px;
-      text-align: left;
-    }}
-    .action-ready {{ background: #ecfdf3; border-color: #abefc6; }}
-    .action-wait {{ background: #fffaeb; border-color: #fedf89; }}
-    .action-avoid {{ background: #fef3f2; border-color: #fecdca; }}
-    .action-title {{ font-size: 15px; font-weight: 900; }}
-    .action-ready .action-title {{ color: var(--good); }}
-    .action-wait .action-title {{ color: var(--warn); }}
-    .action-avoid .action-title {{ color: var(--bad); }}
-    .confidence {{ font-size: 13px; color: var(--muted); }}
-    .confidence strong {{ display: block; color: var(--text); margin-top: 2px; }}
-    .action-button {{
-      border: 1px solid transparent;
-      border-radius: 8px;
-      min-height: 48px;
-      padding: 13px 14px;
-      font-size: 13px;
-      font-weight: 900;
-      letter-spacing: 0;
-      text-align: center;
-      width: 100%;
-      cursor: pointer;
-      position: relative;
-      z-index: 2;
-      touch-action: manipulation;
-    }}
-    button.action-button {{ font-family: inherit; }}
-    .status-action {{
-      border-radius: 8px;
-      min-height: 48px;
-      padding: 13px 14px;
-      display: grid;
-      place-items: center;
-      text-align: center;
-      font-size: 13px;
-      font-weight: 900;
-      line-height: 1.2;
-    }}
-    .action-note {{
-      color: #067647;
-      font-size: 12px;
-      font-weight: 900;
-      line-height: 1.35;
-      text-align: center;
-    }}
-    .action-ready .action-button {{ background: var(--good); color: #ffffff; }}
-    .action-wait .status-action {{ background: transparent; color: var(--warn); border: 1px solid #f79009; }}
-    .action-avoid .status-action {{ background: transparent; color: var(--bad); border: 1px solid #f04438; }}
-    .how-card {{ margin-top: 18px; padding: 18px; }}
-    .active-section {{ margin-top: 20px; }}
-    .active-section h2 {{ margin: 0 0 12px; font-size: 18px; }}
-    .saved-stats {{
-      display: flex;
-      gap: 5px;
-      flex-wrap: wrap;
-      margin-top: 8px;
-    }}
-    .saved-stats span {{
-      border: 1px solid var(--line);
-      border-radius: 999px;
-      background: #f8fafc;
-      color: #334155;
-      padding: 3px 7px;
-      font-size: 11px;
-      font-weight: 900;
-      line-height: 1.2;
-    }}
-    .active-card {{
-      display: grid;
-      grid-template-columns: 190px 150px minmax(260px, 1fr) 130px;
-      gap: 12px;
-      align-items: center;
-      padding: 12px;
-      border: 1px solid var(--line);
-      border-radius: 12px;
-      background: var(--panel);
-      box-shadow: 0 10px 24px rgba(16, 24, 40, 0.04);
-      margin-bottom: 10px;
-    }}
-    .active-action {{ font-weight: 900; color: var(--good); }}
-    .finish-button {{
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: #ffffff;
-      color: var(--text);
-      padding: 9px 10px;
-      font-weight: 900;
-      cursor: pointer;
-      width: 100%;
-    }}
-    .paper-section {{ margin-top: 20px; padding: 16px; }}
-    .paper-head {{
-      display: flex;
-      justify-content: space-between;
-      gap: 12px;
-      align-items: flex-start;
-      margin-bottom: 12px;
-    }}
-    .paper-stats {{ display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }}
-    .paper-stat {{
-      border: 1px solid var(--line);
-      border-radius: 9px;
-      background: #f9fafb;
-      padding: 7px 9px;
-      min-width: 92px;
-    }}
-    .paper-stat .name {{ color: var(--muted); font-size: 11px; font-weight: 800; }}
-    .paper-stat .number {{ color: var(--text); font-size: 15px; font-weight: 900; margin-top: 1px; }}
-    .paper-strategy-block {{
-      border-top: 1px solid var(--line);
-      padding-top: 14px;
-      margin-top: 14px;
-    }}
-    .paper-strategy-head {{
-      display: flex;
-      justify-content: space-between;
-      gap: 12px;
-      align-items: flex-start;
-      margin-bottom: 12px;
-    }}
-    .paper-strategy-head h3 {{
-      font-size: 20px;
-      font-weight: 900;
-      margin: 0;
-    }}
-    .paper-tabs {{
-      display: flex;
-      gap: 8px;
-      flex-wrap: wrap;
-      margin-top: 10px;
-    }}
-    .paper-tab {{
-      border: 1px solid var(--line);
-      border-radius: 999px;
-      background: #ffffff;
-      color: var(--text);
-      padding: 8px 13px;
-      text-decoration: none;
-      font-size: 12px;
-      font-weight: 900;
-    }}
-    .paper-tab.active {{
-      border-color: #12b76a;
-      background: #ecfdf3;
-      color: #067647;
-    }}
-    .paper-ledger {{
-      display: grid;
-      gap: 8px;
-      margin-top: 14px;
-    }}
-    .paper-ledger-head,
-    .paper-ledger-main {{
-      display: grid;
-      grid-template-columns: 1.1fr 0.75fr 1.25fr 0.9fr 0.85fr 0.8fr 0.85fr 0.9fr minmax(190px, 1.45fr);
-      gap: 8px;
-      align-items: center;
-    }}
-    .paper-ledger-head {{
-      color: var(--muted);
-      font-size: 11px;
-      font-weight: 900;
-      text-transform: uppercase;
-      padding: 0 10px;
-    }}
-    .paper-ledger-row {{
-      border: 1px solid var(--line);
-      border-radius: 12px;
-      background: #ffffff;
-      padding: 10px;
-      font-size: 13px;
-    }}
-    .paper-ledger-main {{
-      align-items: center;
-    }}
-    .paper-ledger-row strong {{ color: var(--text); }}
-    .balance-equation {{
-      display: inline-grid;
-      grid-template-columns: auto auto auto auto;
-      align-items: end;
-      justify-content: end;
-      column-gap: 7px;
-      row-gap: 4px;
-      line-height: 1.25;
-    }}
-    .balance-equation .base,
-    .balance-equation .operator {{ color: var(--text); }}
-    .balance-equation .pnl-stack {{
-      display: inline-grid;
-      gap: 2px;
-      text-align: center;
-    }}
-    .balance-equation .pnl-label {{
-      color: var(--muted);
-      font-size: 9px;
-      font-weight: 900;
-      line-height: 1;
-      text-transform: uppercase;
-    }}
-    .balance-equation .gain {{ color: #079455; }}
-    .balance-equation .loss {{ color: #d92d20; }}
-    .balance-equation strong {{
-      grid-column: 1 / -1;
-      justify-self: end;
-      font-size: 15px;
-    }}
-    .paper-mini-market {{
-      display: grid;
-      gap: 4px;
-      min-width: 120px;
-    }}
-    .paper-mini-market .sparkline {{
-      width: 120px;
-      height: 30px;
-      display: block;
-    }}
-    .live-badge.tiny {{
-      width: fit-content;
-      font-size: 9px;
-      padding: 2px 6px;
-    }}
-    .paper-split {{
-      display: flex;
-      gap: 8px;
-      flex-wrap: wrap;
-      margin: 10px 0 14px;
-    }}
-    .paper-split-card {{
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      background: #f9fafb;
-      padding: 8px 10px;
-      color: var(--text);
-      font-size: 12px;
-      font-weight: 800;
-    }}
-    .paper-split-card strong {{ font-size: 13px; }}
-    .paper-list {{ display: grid; gap: 10px; }}
-    .paper-trade {{
-      display: grid;
-      grid-template-columns: 150px minmax(260px, 1fr) minmax(210px, 0.7fr);
-      gap: 12px;
-      align-items: start;
-      border: 1px solid var(--line);
-      border-radius: 12px;
-      background: #ffffff;
-      padding: 12px;
-    }}
-    .paper-title {{ font-size: 17px; font-weight: 900; }}
-    .strategy-chip {{
-      display: inline-flex;
-      align-items: center;
-      border-radius: 999px;
-      padding: 4px 9px;
-      font-size: 11px;
-      font-weight: 900;
-      margin-top: 6px;
-    }}
-    .strategy-chip.grid {{ color: #065f46; background: #d1fae5; border: 1px solid #a7f3d0; }}
-    .strategy-chip.loop {{ color: #3730a3; background: #e0e7ff; border: 1px solid #c7d2fe; }}
-    .paper-result {{ font-size: 18px; font-weight: 900; text-align: right; }}
-    .paper-result .balance-equation {{ justify-content: flex-end; }}
-    .paper-detail {{
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 6px;
-      margin-top: 8px;
-    }}
-    .paper-detail div {{
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: #f9fafb;
-      padding: 6px 7px;
-      color: var(--muted);
-      font-size: 12px;
-    }}
-    .paper-detail strong {{ color: var(--text); }}
-    .paper-specifics {{
-      margin-top: 10px;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: #f9fafb;
-      padding: 9px 10px;
-    }}
-    .paper-specifics summary {{
-      cursor: pointer;
-      color: var(--text);
-      font-size: 12px;
-      font-weight: 900;
-      text-transform: uppercase;
-    }}
-    .paper-specifics-grid {{
-      display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 6px;
-      margin-top: 8px;
-    }}
-    .paper-specifics-grid div {{
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: #ffffff;
-      padding: 6px 7px;
-      color: var(--text);
-      font-size: 12px;
-      font-weight: 800;
-    }}
-    .paper-specifics-grid span {{
-      display: block;
-      color: var(--muted);
-      font-size: 10px;
-      font-weight: 900;
-      text-transform: uppercase;
-    }}
-    .empty-card {{
-      padding: 28px;
-      color: var(--muted);
-      text-align: center;
-    }}
-    .risk-note {{
-      color: var(--muted);
-      font-size: 12px;
-      margin-top: 18px;
-    }}
-    @media (max-width: 1100px) {{
-      main {{ width: min(1040px, calc(100vw - 28px)); }}
-      .filter-panel {{ grid-template-columns: 1fr 1fr; }}
-      .filter-group {{ border-right: 0; padding-right: 0; }}
-      .opportunity-card {{ grid-template-columns: 1fr; }}
-      .active-card {{ grid-template-columns: 1fr; }}
-      .paper-trade {{ grid-template-columns: 1fr; }}
-      .paper-ledger-head {{ display: none; }}
-      .paper-ledger-main {{ grid-template-columns: 1fr 1fr; }}
-      .paper-result {{ text-align: left; }}
-      .market-panel {{ grid-template-columns: 1fr; }}
-      .settings-cell {{ border-left: 0; border-top: 1px solid var(--line); padding-left: 0; padding-top: 14px; }}
-    }}
-    @media (max-width: 720px) {{
-      header {{ display: block; }}
-      .filter-panel {{ grid-template-columns: 1fr; }}
-      .tile-grid, .tile-grid.three {{ grid-template-columns: 1fr; }}
-      .opportunity-card {{ grid-template-columns: 1fr; }}
-      .fields {{ grid-template-columns: 1fr; }}
-      .paper-head {{ display: block; }}
-      .paper-strategy-head {{ display: block; }}
-      .paper-stats {{ justify-content: flex-start; margin-top: 10px; }}
-      .paper-detail, .paper-specifics-grid {{ grid-template-columns: 1fr; }}
-    }}
-  </style>
-</head>
-<body>
-    <main>
-      <header>
-        <div>
-          <div class="brand" style="margin-bottom:18px;">
-            <div class="brand-mark">G</div>
-            <div>
-              <div class="brand-name">GridPilot</div>
-              <div class="brand-sub">for Bitsgap</div>
-            </div>
-          </div>
-          <h1>What Should I Deploy Today?</h1>
-          <div class="subtitle">Pick a bot type and time horizon. The app calculates the setup.</div>
-        </div>
-        <div class="updated"><span class="dot"></span> Updated {_escape(_short_time(payload.get("generated_at", snapshot.get("generated_at", ""))))} <span style="color:#344054;">&#8635;</span></div>
-      </header>
-      <section class="panel filter-panel">
-        <div class="filter-group">
-          <div class="filter-title">Strategy</div>
-          <div class="tile-grid">
-            {_op_filter_tile(filters, "strategy", "grid", "Grid", "&#9638;", "Grid bot")}
-            {_op_filter_tile(filters, "strategy", "loop", "Loop", "&#8734;", "Loop bot")}
-          </div>
-        </div>
-        <div class="filter-group">
-          <div class="filter-title">Time Horizon</div>
-          <div class="tile-grid three">
-            {_op_filter_tile(filters, "horizon", "short", "Short-term", "&#9889;", "Days - 2 weeks")}
-            {_op_filter_tile(filters, "horizon", "mid", "Mid-term", "&#128337;", "1-3 weeks")}
-            {_op_filter_tile(filters, "horizon", "long", "Long-term", "&#128034;", "2-8 weeks")}
-          </div>
-        </div>
-        <div class="filter-group">
-          <div class="filter-title">Exchange</div>
-          <div class="exchange-card"><span><span class="exchange-logo">K</span></span><span>Kraken</span><span class="status-badge status-ready">&#10003;</span></div>
-        </div>
-      </section>
-
-      <div class="list-toolbar">
-        <div>Showing {len(visible_opportunities)} usable setup{"" if len(visible_opportunities) == 1 else "s"}</div>
-      </div>
-      <div class="opportunity-list">{cards}</div>
-      {active_cards}
-      {paper_cards}
-      <div class="risk-note">&#128737; Trading bots involve risk. Past performance is not predictive of future results.</div>
-    </main>
-</body>
-</html>"""
-
-
-def render_research_dashboard(snapshot: dict[str, Any], refresh_seconds: int) -> str:
-    research = snapshot.get("research", {})
-    loop = research.get("loop", {})
-    grid = research.get("grid", {})
-    loop_paper = loop.get("paper", {})
-    grid_paper = grid.get("paper", {})
-
-    loop_live_rows = "".join(_research_loop_live_row(row) for row in loop.get("top_live", [])) or _empty_row(7, "No LOOP scan results loaded yet.")
-    grid_live_rows = "".join(_research_grid_live_row(row) for row in grid.get("top_live", [])) or _empty_row(8, "No GRID scan results loaded yet.")
-    loop_proof_rows = "".join(_research_loop_proof_row(row) for row in loop.get("proof", [])) or _empty_row(6, "No LOOP proof rows loaded.")
-    grid_proof_rows = "".join(_research_grid_proof_row(row) for row in grid.get("proof", [])) or _empty_row(8, "No GRID proof rows loaded.")
-
-    loop_ready = int(loop.get("ready_count", 0))
-    grid_ready = int(grid.get("ready_count", 0))
-    loop_scanned = int(loop.get("scanned_count", 0))
-    grid_scanned = int(grid.get("scanned_count", 0))
-
-    return f"""<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="refresh" content="{int(refresh_seconds)}">
-  <title>Loopbots Research</title>
-  <style>
-    :root {{
-      color-scheme: dark;
-      --bg: #0f1117;
-      --panel: #171b24;
-      --panel-2: #1f2530;
-      --line: #2c3442;
-      --text: #edf2f7;
-      --muted: #9aa4b2;
-      --good: #25d695;
-      --bad: #ff6875;
-      --warn: #ffd166;
-      --accent: #4da3ff;
-    }}
-    * {{ box-sizing: border-box; }}
-    body {{
-      margin: 0;
-      background: var(--bg);
-      color: var(--text);
-      font-family: Arial, Helvetica, sans-serif;
-      line-height: 1.4;
-    }}
-    main {{
-      width: min(1240px, calc(100vw - 32px));
-      margin: 24px auto 40px;
-    }}
-    header {{
-      display: flex;
-      justify-content: space-between;
-      gap: 16px;
-      align-items: flex-end;
-      margin-bottom: 18px;
-    }}
-    h1, h2 {{ margin: 0; }}
-    h1 {{ font-size: 28px; }}
-    h2 {{ font-size: 18px; margin-bottom: 10px; }}
-    nav {{ display: flex; gap: 8px; margin: 0 0 18px; flex-wrap: wrap; }}
-    nav a {{
-      color: var(--text);
-      text-decoration: none;
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 9px 13px;
-      font-weight: 700;
-    }}
-    nav a.active {{ background: var(--accent); color: #07111f; border-color: var(--accent); }}
-    .muted {{ color: var(--muted); }}
-    .grid {{
-      display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 12px;
-      margin-bottom: 16px;
-    }}
-    .card, section {{
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: 8px;
-    }}
-    .card {{ padding: 14px; }}
-    .label {{ color: var(--muted); font-size: 12px; text-transform: uppercase; }}
-    .value {{ font-size: 24px; font-weight: 700; margin-top: 4px; }}
-    .good {{ color: var(--good); }}
-    .bad {{ color: var(--bad); }}
-    .warn {{ color: var(--warn); }}
-    section {{ padding: 16px; margin-top: 16px; overflow-x: auto; }}
-    table {{ width: 100%; border-collapse: collapse; min-width: 880px; }}
-    th, td {{
-      text-align: left;
-      border-bottom: 1px solid var(--line);
-      padding: 10px 8px;
-      white-space: nowrap;
-      font-size: 14px;
-      vertical-align: middle;
-    }}
-    th {{ color: var(--muted); font-size: 12px; text-transform: uppercase; }}
-    tr:last-child td {{ border-bottom: 0; }}
-    .pill {{
-      display: inline-block;
-      padding: 3px 8px;
-      border-radius: 999px;
-      background: var(--panel-2);
-      color: var(--text);
-      font-size: 12px;
-    }}
-    .score {{
-      display: grid;
-      grid-template-columns: 52px 120px;
-      align-items: center;
-      gap: 8px;
-    }}
-    .bar {{
-      height: 8px;
-      border-radius: 999px;
-      overflow: hidden;
-      background: #303848;
-    }}
-    .bar span {{
-      display: block;
-      height: 100%;
-      background: var(--accent);
-      width: var(--w);
-    }}
-    @media (max-width: 860px) {{
-      header {{ display: block; }}
-      .grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
-    }}
-    @media (max-width: 520px) {{
-      .grid {{ grid-template-columns: 1fr; }}
-    }}
-  </style>
-</head>
-<body>
-  <main>
-    <header>
-      <div>
-        <h1>Bot Research</h1>
-        <div class="muted">LOOP scans Kraken { _escape(loop.get("quote_asset", "USDT")) } on { _escape(loop.get("timeframe", "")) }; GRID scans Kraken { _escape(", ".join(grid.get("quote_assets", []))) } on { _escape(grid.get("timeframe", "")) }.</div>
-      </div>
-      <div class="muted">Generated {_local_time_html(research.get("generated_at", snapshot.get("generated_at", "")), "datetime")}</div>
-    </header>
-    <nav>
-      <a href="/opportunities">Opportunities</a>
-      <a href="/loop">LOOP Bots</a>
-      <a href="/grid">GRID Bots</a>
-      <a class="active" href="/research">Research</a>
-      <a href="/backtest">Backtest Lab</a>
-    </nav>
-
-    <div class="grid">
-      {_metric("LOOP Ready", f"{loop_ready}/{loop_scanned}", "Live entry-ready scans")}
-      {_metric("GRID Ready", f"{grid_ready}/{grid_scanned}", "Live entry-ready scans")}
-      {_metric("LOOP Paper WR", _pct(loop_paper.get("win_rate_pct", 0.0)), "Last paper window")}
-      {_metric("GRID Paper WR", _pct(grid_paper.get("win_rate_pct", 0.0)), "All GRID paper closes")}
-      {_metric("LOOP Paper Net", _signed_pct(loop_paper.get("net_return_pct", 0.0)), "Tracked alert result", loop_paper.get("net_return_pct", 0.0))}
-      {_metric("GRID Paper Net", _signed_pct(grid_paper.get("net_return_pct", 0.0)), "Tracked alert result", grid_paper.get("net_return_pct", 0.0))}
-      {_metric("Scan Cycle", f"{int(research.get('scan_interval_minutes', 15))}m", "Telegram can fire any scan")}
-      {_metric("Status", "Live", "Results page active")}
-    </div>
-
-    <section>
-      <h2>LOOP Live Results</h2>
-      <table>
-        <thead>
-          <tr><th>Coin</th><th>Entry Score</th><th>Status</th><th>Setup</th><th>Distance</th><th>Price</th><th>Reason</th></tr>
-        </thead>
-        <tbody>{loop_live_rows}</tbody>
-      </table>
-    </section>
-
-    <section>
-      <h2>GRID Live Results</h2>
-      <table>
-        <thead>
-          <tr><th>Coin</th><th>Score</th><th>Status</th><th>Low / High</th><th>Levels</th><th>Grid Step</th><th>TP / SL</th><th>Reason</th></tr>
-        </thead>
-        <tbody>{grid_live_rows}</tbody>
-      </table>
-    </section>
-
-    <section>
-      <h2>LOOP Historical Proof</h2>
-      <table>
-        <thead>
-          <tr><th>Coin</th><th>Setup</th><th>Trades</th><th>Win Rate</th><th>Est. Monthly / $1k</th><th>Status</th></tr>
-        </thead>
-        <tbody>{loop_proof_rows}</tbody>
-      </table>
-    </section>
-
-    <section>
-      <h2>GRID Historical Proof</h2>
-      <table>
-        <thead>
-          <tr><th>Coin</th><th>Preset</th><th>Setup</th><th>Win Rate</th><th>Est. Monthly</th><th>Worst DD</th><th>Alerts/Mo</th><th>Status</th></tr>
-        </thead>
-        <tbody>{grid_proof_rows}</tbody>
-      </table>
-    </section>
-  </main>
-  {_browser_timezone_script()}
-</body>
-</html>"""
-
-
 def render_backtest_dashboard(snapshot: dict[str, Any], refresh_seconds: int) -> str:
     backtest = snapshot.get("backtest", {})
-    bot = str(backtest.get("bot", "grid"))
+    bot = "loop"
     rows = backtest.get("rows", [])
-    if bot == "loop":
-        result_rows = "".join(_backtest_loop_row(row) for row in rows) or _empty_row(9, "No LOOP settings passed.")
-        result_head = "<tr><th>Coin</th><th>Timeframe</th><th>Distance</th><th>Count</th><th>Trades</th><th>Win Rate</th><th>Est. Monthly</th><th>Net</th><th>Avg Hold</th></tr>"
-    else:
-        result_rows = "".join(_backtest_grid_row(row) for row in rows) or _empty_row(12, "No GRID settings passed.")
-        result_head = "<tr><th>Coin</th><th>Timeframe</th><th>Low</th><th>High</th><th>Levels</th><th>Grid Step</th><th>TP / SL</th><th>Starts</th><th>Win Rate</th><th>Est. Monthly</th><th>Worst DD</th><th>Score</th></tr>"
+    result_rows = "".join(_backtest_loop_row(row) for row in rows) or _empty_row(9, "No LOOP settings passed.")
+    result_head = "<tr><th>Coin</th><th>Timeframe</th><th>Distance</th><th>Count</th><th>Trades</th><th>Win Rate</th><th>Est. Monthly</th><th>Net</th><th>Avg Hold</th></tr>"
     best_setup_card = _best_backtest_card(bot, rows[0] if rows else None)
 
     errors = backtest.get("errors") or []
     error_html = "".join(f"<div class=\"bad\">{_escape(error)}</div>" for error in errors)
     max_days = int(backtest.get("max_days", 1825))
     best_row = rows[0] if rows else None
-    bot_label = "LOOP" if bot == "loop" else "GRID"
+    bot_label = "LOOP"
     settings_panel = _bitsgap_settings_panel(bot, best_row, backtest)
     result_panel = _bitsgap_result_panel(bot, best_row, backtest, rows)
 
@@ -2758,7 +1555,6 @@ def render_backtest_dashboard(snapshot: dict[str, Any], refresh_seconds: int) ->
         <input type="hidden" name="run" value="1">
         <label>Bot
           <select name="bot">
-            <option value="grid"{_selected(bot, "grid")}>GRID</option>
             <option value="loop"{_selected(bot, "loop")}>LOOP</option>
           </select>
         </label>
@@ -2787,9 +1583,6 @@ def render_backtest_dashboard(snapshot: dict[str, Any], refresh_seconds: int) ->
           <label>Max Pairs<input name="max_pairs" value="{_escape(backtest.get('max_pairs', 10))}" inputmode="numeric"></label>
           <label>LOOP Distances<input name="distances" value="{_escape(backtest.get('distances', '0.8,1,1.2,1.5,2,2.5,3'))}"></label>
           <label>LOOP Counts<input name="order_counts" value="{_escape(backtest.get('order_counts', '10,20,40'))}"></label>
-          <label>GRID Low %<input name="grid_lowers" value="{_escape(backtest.get('grid_lowers', '3,5,8,10,14,18,25,35'))}"></label>
-          <label>GRID High %<input name="grid_uppers" value="{_escape(backtest.get('grid_uppers', '7.5,10,17,22,35,50,65,80'))}"></label>
-          <label>GRID Levels<input name="grid_levels" value="{_escape(backtest.get('grid_levels', '5,10,20,35,50,65,85,100'))}"></label>
           <label>Hold Days<input name="hold_days" value="{_escape(backtest.get('hold_days', '30'))}" inputmode="decimal"></label>
           <label>Take Profit %<input name="take_profit_pct" value="{_escape(backtest.get('take_profit_pct', '8'))}" inputmode="decimal"></label>
           <label>Stop Loss %<input name="stop_loss_pct" value="{_escape(backtest.get('stop_loss_pct', '5'))}" inputmode="decimal"></label>
@@ -2818,7 +1611,6 @@ def render_backtest_dashboard(snapshot: dict[str, Any], refresh_seconds: int) ->
 
 def _opportunity_card(row: dict[str, Any], filters: dict[str, Any] | None = None) -> str:
     status = str(row.get("status", "Wait"))
-    strategy = str(row.get("strategy", ""))
     speed = str(row.get("speed", ""))
     pair = str(row.get("pair", ""))
     return (
@@ -2863,7 +1655,7 @@ def _active_setup_cards(active_setups: dict[str, Any], filters: dict[str, Any]) 
             f'<div><div class="detail-label">Now / PnL</div><div class="detail-value" style="font-size:15px;">{_escape(current)} &bull; {profit}</div><div class="subline">{_escape(guidance)}</div></div>'
             '<form method="post" action="/api/finish-setup">'
             f'<input type="hidden" name="setup_id" value="{_escape(setup.get("id", ""))}">'
-            f'<input type="hidden" name="strategy" value="{_escape(filters.get("strategy", "grid"))}">'
+            '<input type="hidden" name="strategy" value="loop">'
             f'<input type="hidden" name="horizon" value="{_escape(filters.get("horizon", "short"))}">'
             '<button class="finish-button" type="submit">FINISH</button>'
             "</form>"
@@ -2880,9 +1672,7 @@ def _opportunity_paper_cards(opportunity_paper: dict[str, Any], filters: dict[st
     all_rows = list(open_trades) + list(reversed(closed_trades))
     investment = _money(opportunity_paper.get("investment_usd", 1000.0))
     fee = _pct(float(opportunity_paper.get("fee_pct", 0.0) or 0.0))
-    paper_filter = str(filters.get("paper", "all") or "all").lower()
-    if paper_filter not in {"all", "grid", "loop"}:
-        paper_filter = "all"
+    paper_filter = "loop"
     rows = _paper_filter_rows(all_rows, paper_filter)
     starting_balance = float(opportunity_paper.get("starting_balance_usd", 10000.0) or 10000.0)
     stats = _paper_stats_html(rows, starting_balance)
@@ -2895,41 +1685,6 @@ def _opportunity_paper_cards(opportunity_paper: dict[str, Any], filters: dict[st
         f'{ledger}'
         "</section>"
     )
-    all_rows = list(open_trades) + list(reversed(closed_trades))
-    display_rows = list(open_trades) + list(reversed(closed_trades[-8:]))
-    if not all_rows:
-        return (
-            '<section id="paper-performance" class="panel paper-section">'
-            '<div class="paper-head"><div><h2>Opportunity Paper Trades</h2>'
-            '<div class="muted">$1,000 paper tracking starts automatically when a setup is Ready Now.</div></div>'
-            '<a class="top-link" href="/opportunities#top" aria-label="Back to top">↑</a></div>'
-            '<div class="empty-card">No saved opportunity paper trades yet.</div>'
-            "</section>"
-    )
-    investment = _money(opportunity_paper.get("investment_usd", 1000.0))
-    fee = _pct(float(opportunity_paper.get("fee_pct", 0.0) or 0.0))
-    grid_rows = [row for row in all_rows if str(row.get("strategy", "")).upper() == "GRID"]
-    loop_rows = [row for row in all_rows if str(row.get("strategy", "")).upper() == "LOOP"]
-    grid_display_rows = [row for row in display_rows if str(row.get("strategy", "")).upper() == "GRID"]
-    loop_display_rows = [row for row in display_rows if str(row.get("strategy", "")).upper() == "LOOP"]
-    paper_filter = str(filters.get("paper", "all") or "all").lower()
-    if paper_filter not in {"all", "grid", "loop"}:
-        paper_filter = "all"
-    if paper_filter == "grid":
-        sections = _paper_strategy_section("GRID", grid_rows, grid_display_rows, float(opportunity_paper.get("starting_balance_usd", 10000.0) or 10000.0))
-    elif paper_filter == "loop":
-        sections = _paper_strategy_section("LOOP", loop_rows, loop_display_rows, float(opportunity_paper.get("starting_balance_usd", 10000.0) or 10000.0))
-    else:
-        starting_balance = float(opportunity_paper.get("starting_balance_usd", 10000.0) or 10000.0)
-        sections = _paper_strategy_section("GRID", grid_rows, grid_display_rows, starting_balance) + _paper_strategy_section("LOOP", loop_rows, loop_display_rows, starting_balance)
-    return (
-        '<section id="paper-performance" class="panel paper-section">'
-        f'<div class="paper-head"><div><h2>Paper Trading Performance</h2><div class="muted">{investment} simulated per deploy-ready setup. Fee estimate: {fee}. Times shown in {_browser_timezone_label_html()}.</div>{_paper_tabs(filters, paper_filter)}</div><a class="top-link" href="/opportunities#top" aria-label="Back to top">↑</a></div>'
-        f'{sections}'
-        "</section>"
-    )
-
-
 def _paper_stat(label: str, value: Any) -> str:
     return (
         '<div class="paper-stat">'
@@ -2943,9 +1698,7 @@ def _opportunities_quick_tabs(filters: dict[str, Any]) -> str:
     selected = str(filters.get("paper", "") or "").lower()
     selected_horizon = str(filters.get("horizon", "all") or "all").lower()
     tabs = [
-        ("quick", "GRID Bots Ready Now", "/opportunities#grid-ready", selected == "" and selected_horizon == "all"),
-        ("quick", "LOOP Bots Ready Now", "/opportunities#loop-ready", False),
-        ("quick", "GRID Bot Paper", "/opportunities?" + urlencode({"paper": "grid"}) + "#paper-performance", selected == "grid"),
+        ("quick", "LOOP Bots Ready Now", "/opportunities#loop-ready", selected != "loop" and selected_horizon == "all"),
         ("quick", "LOOP Bot Paper Trading", "/opportunities?" + urlencode({"paper": "loop"}) + "#paper-performance", selected == "loop"),
         ("quick", "Saved Bots", "/opportunities#saved-bots", False),
     ]
@@ -2983,7 +1736,7 @@ def _paper_quick_tabs(filters: dict[str, Any]) -> str:
 
 
 def _paper_tabs(filters: dict[str, Any], selected: str) -> str:
-    tabs = [("grid", "GRID"), ("loop", "LOOP")]
+    tabs = [("loop", "LOOP")]
     links = []
     for value, label in tabs:
         href = "/opportunities?" + urlencode({"paper": value}) + "#paper-performance"
@@ -2993,11 +1746,7 @@ def _paper_tabs(filters: dict[str, Any], selected: str) -> str:
 
 
 def _paper_filter_rows(rows: list[dict[str, Any]], selected: str) -> list[dict[str, Any]]:
-    if selected == "grid":
-        return [row for row in rows if str(row.get("strategy", "")).upper() == "GRID"]
-    if selected == "loop":
-        return [row for row in rows if str(row.get("strategy", "")).upper() == "LOOP"]
-    return rows
+    return [row for row in rows if str(row.get("strategy", "")).upper() == "LOOP"]
 
 
 def _paper_stats_html(rows: list[dict[str, Any]], starting_balance: float = 10000.0) -> str:
@@ -3015,6 +1764,12 @@ def _paper_stats_html(rows: list[dict[str, Any]], starting_balance: float = 1000
             ("Win Rate", win_rate),
         ]
     )
+
+
+def _win_rate_text(wins: int, closed: int) -> str:
+    if closed <= 0:
+        return "0/0 (0.00%)"
+    return f"{wins}/{closed} ({(wins / closed) * 100:.2f}%)"
 
 
 def _paper_ledger_rows(rows: list[dict[str, Any]]) -> str:
@@ -3038,8 +1793,8 @@ def _paper_trade_row(row: dict[str, Any]) -> str:
     investment = float(row.get("investment_usd", 1000.0) or 1000.0)
     pnl = float(row.get("net_pnl_usd", 0.0) or 0.0) if is_closed else float(row.get("unrealized_pnl_usd", 0.0) or 0.0)
     balance_equation = _balance_equation_html(investment, pnl)
-    chip_class = "grid" if strategy.upper() == "GRID" else "loop"
-    chip_text = "Grid" if strategy.upper() == "GRID" else "Loop"
+    chip_class = "loop"
+    chip_text = "Loop"
     end_date = _local_time_html(row.get("closed_at", ""), "datetime") if is_closed else "Open"
     exit_price = _price(row.get("exit_price")) if is_closed else "Open"
     result_class = "good" if pnl >= 0 else "bad"
@@ -3078,156 +1833,18 @@ def _paper_live_chart(row: dict[str, Any]) -> str:
     )
 
 
-def _paper_strategy_section(
-    strategy: str,
-    rows: list[dict[str, Any]],
-    display_rows: list[dict[str, Any]],
-    starting_balance: float = 10000.0,
-) -> str:
-    if not rows:
-        return (
-            '<div class="paper-strategy-block">'
-            f'<div class="paper-strategy-head"><div class="section-title"><h3>{strategy} Paper</h3></div><a class="top-link" href="/opportunities#top" aria-label="Back to top">↑</a></div>'
-            f'<div class="empty-card">No {strategy} paper trades yet.</div>'
-            "</div>"
-        )
-    open_rows = [row for row in rows if row.get("status") == "OPEN"]
-    closed_rows = [row for row in rows if row.get("status") == "CLOSED"]
-    wins = [row for row in closed_rows if float(row.get("net_return_pct", 0.0) or 0.0) > 0]
-    losses = max(len(closed_rows) - len(wins), 0)
-    win_rate = _win_rate_text(len(wins), len(closed_rows))
-    stat_html = "".join(
-        _paper_stat(label, value)
-        for label, value in [
-            ("Open", len(open_rows)),
-            ("Closed", len(closed_rows)),
-            ("W / L", f"{len(wins)} / {losses}"),
-            ("Win Rate", win_rate),
-        ]
-    )
-    trade_html = "".join(_paper_trade_card(row) for row in display_rows[:8])
-    return (
-        '<div class="paper-strategy-block">'
-        '<div class="paper-strategy-head">'
-        f'<div class="section-title"><h3>{strategy} Paper</h3></div>'
-        f'<div class="paper-stats">{stat_html}</div>'
-        '<a class="top-link" href="/opportunities#top" aria-label="Back to top">↑</a>'
-        "</div>"
-        f'<div class="paper-list">{trade_html}</div>'
-        "</div>"
-    )
-
-
-def _win_rate_text(wins: int, closed: int) -> str:
-    if closed <= 0:
-        return "Pending"
-    return f"{wins}/{closed} ({_pct((wins / closed) * 100)})"
-
-
-def _paper_trade_card(row: dict[str, Any]) -> str:
-    status = str(row.get("status", "OPEN"))
-    pair = str(row.get("pair", ""))
-    strategy = str(row.get("strategy", ""))
-    is_closed = status == "CLOSED"
-    pnl_value = row.get("net_pnl_usd") if is_closed else row.get("unrealized_pnl_usd")
-    pct_value = row.get("net_return_pct") if is_closed else row.get("unrealized_net_return_pct")
-    investment = float(row.get("investment_usd", 1000.0) or 1000.0)
-    pnl_number = float(pnl_value or 0.0)
-    balance_equation = _balance_equation_html(investment, pnl_number)
-    pct = _signed_pct(float(pct_value or 0.0))
-    result_class = "good" if float(pct_value or 0.0) >= 0 else "bad"
-    exit_text = _price(row.get("exit_price")) if is_closed else "Open"
-    reason = row.get("exit_reason") if is_closed else row.get("entry_reason")
-    note = row.get("paper_note") or ""
-    chip_class = "grid" if strategy.upper() == "GRID" else "loop"
-    chip_text = "GRID PAPER" if strategy.upper() == "GRID" else "LOOP PAPER"
-    return (
-        '<article class="paper-trade">'
-        f'<div><div class="paper-title">{_escape(pair)}</div><span class="strategy-chip {chip_class}">{chip_text}</span><div class="subline">{status.title()}</div>'
-        f'<div class="subline">Opened {_local_time_html(row.get("opened_at", ""), "datetime")}</div></div>'
-        '<div>'
-        '<div class="paper-detail">'
-        f'<div><strong>Entry:</strong> {_price(row.get("entry_price"))}</div>'
-        f'<div><strong>Exit:</strong> {_escape(exit_text)}</div>'
-        f'<div><strong>TP:</strong> {_price(row.get("take_profit_price"))}</div>'
-        f'<div><strong>Stop Loss:</strong> {_price(row.get("stop_price"))}</div>'
-        f'<div><strong>Reason:</strong> {_escape(reason or note or "Watching setup.")}</div>'
-        "</div>"
-        f"{_paper_specifics_dropdown(row)}"
-        f'<div class="subline" style="margin-top:8px;">Last checked {_local_time_html(row.get("last_checked_at", ""), "datetime")}</div>'
-        "</div>"
-        f'<div class="paper-result {result_class}">{balance_equation}<div class="subline">{pct}</div></div>'
-        "</article>"
-    )
-
-
-def _paper_strategy_split(rows: list[dict[str, Any]]) -> str:
-    cards = []
-    for strategy in ("GRID", "LOOP"):
-        strategy_rows = [row for row in rows if str(row.get("strategy", "")).upper() == strategy]
-        if not strategy_rows:
-            continue
-        open_count = sum(1 for row in strategy_rows if row.get("status") == "OPEN")
-        closed = [row for row in strategy_rows if row.get("status") == "CLOSED"]
-        pnl = sum(float(row.get("net_pnl_usd", 0.0) or 0.0) for row in closed)
-        cards.append(
-            '<div class="paper-split-card">'
-            f'<strong>{strategy}</strong> &bull; Open {open_count} &bull; Closed {len(closed)} &bull; PnL {_money(pnl)}'
-            "</div>"
-        )
-    return f'<div class="paper-split">{"".join(cards)}</div>' if cards else ""
-
-
-def _paper_settings(row: dict[str, Any]) -> str:
-    fields = row.get("settings", {})
-    if not isinstance(fields, dict):
-        return "n/a"
-    strategy = str(row.get("strategy", "")).upper()
-    if strategy == "GRID":
-        parts = [
-            f"Low {fields.get('Low price')}",
-            f"High {fields.get('High price')}",
-            f"Levels {fields.get('Grid levels')}",
-            f"TP {fields.get('Take profit')}",
-            f"SL {fields.get('Stop loss')}",
-        ]
-    else:
-        parts = [
-            f"Distance {fields.get('Order distance')}",
-            f"Count {fields.get('Order count')}",
-            f"TP {fields.get('Take profit')}",
-            f"SL {_loop_stop_loss_value(fields)}",
-        ]
-    return " | ".join(str(part) for part in parts if "None" not in str(part))
-
-
 def _paper_specifics_dropdown(row: dict[str, Any]) -> str:
     fields = row.get("settings", {})
     if not isinstance(fields, dict) or not fields:
         return ""
-    strategy = str(row.get("strategy", "")).upper()
-    if strategy == "GRID":
-        items = [
-            ("Bitsgap preset", fields.get("Bitsgap preset")),
-            ("Low price", fields.get("Low price")),
-            ("High price", fields.get("High price")),
-            ("Grid levels", fields.get("Grid levels")),
-            ("Grid step", fields.get("Grid step")),
-            ("Take profit", fields.get("Take profit")),
-            ("Stop loss", fields.get("Stop loss")),
-            ("Trailing up", fields.get("Trailing up", "On")),
-            ("Trailing down", fields.get("Trailing down", "Off")),
-            ("Pump protection", fields.get("Pump protection", "On")),
-        ]
-    else:
-        items = [
+    items = [
             ("Bitsgap preset", fields.get("Bitsgap preset")),
             ("Entry price", fields.get("Entry price")),
             ("Order distance", fields.get("Order distance")),
             ("Order count", fields.get("Order count")),
             ("Take profit", fields.get("Take profit")),
             ("Stop loss", _loop_stop_loss_value(fields)),
-        ]
+    ]
     cells = "".join(
         f'<div><span>{_escape(label)}</span>{_escape(value)}</div>'
         for label, value in items
@@ -3512,26 +2129,13 @@ def _settings_summary(row: dict[str, Any]) -> str:
     fields = row.get("bitsgap_fields", {})
     if not isinstance(fields, dict) or not fields:
         return '<div class="fields"><div>n/a</div></div>'
-    strategy = str(row.get("strategy", "")).upper()
-    if strategy == "GRID":
-        items = [
-            ("Low", fields.get("Low price")),
-            ("High", fields.get("High price")),
-            ("Levels", fields.get("Grid levels")),
-            ("SL", fields.get("Stop loss")),
-            ("TP", fields.get("Take profit")),
-            ("Trailing Up", "On"),
-            ("Trailing Down", "Off"),
-            ("Protection", "Monitoring on"),
-        ]
-    else:
-        items = [
+    items = [
             ("Order distance", fields.get("Order distance")),
             ("Order count", fields.get("Order count")),
             ("TP", fields.get("Take profit")),
             ("Stop loss", _loop_stop_loss_value(fields)),
             ("Live", "Now"),
-        ]
+    ]
     visible = [
         f"<div><strong>{_field_label(label)}:</strong> {_escape(value)}</div>"
         for label, value in items
@@ -3659,34 +2263,6 @@ def _research_loop_live_row(row: dict[str, Any]) -> str:
     )
 
 
-def _research_grid_live_row(row: dict[str, Any]) -> str:
-    score = int(float(row.get("score", 0) or 0))
-    status = "Ready" if row.get("ready") else "Waiting"
-    if row.get("active"):
-        status = "Active paper"
-    status_class = "good" if row.get("ready") else ""
-    lower_pct = float(row.get("lower_pct", 0.0) or 0.0)
-    upper_pct = float(row.get("upper_pct", 0.0) or 0.0)
-    levels = int(float(row.get("levels", 0) or 0))
-    grid_step_pct = float(row.get("grid_step_pct", 0.0) or 0.0)
-    take_profit_pct = float(row.get("take_profit_pct", 0.0) or 0.0)
-    stop_loss_pct = float(row.get("stop_loss_pct", 0.0) or 0.0)
-    range_text = f"-{lower_pct:g}% / +{upper_pct:g}%"
-    tp_sl_text = f"+{take_profit_pct:g}% / -{stop_loss_pct:g}%"
-    return (
-        "<tr>"
-        f"<td>{_escape(row.get('symbol', ''))}</td>"
-        f"<td>{_score_bar(score)}</td>"
-        f'<td class="{status_class}">{_escape(status)}</td>'
-        f"<td>{_escape(range_text)}</td>"
-        f"<td>{levels}</td>"
-        f"<td>Roughly {_escape(f'{grid_step_pct:.2f}'.rstrip('0').rstrip('.'))}%</td>"
-        f"<td>{_escape(tp_sl_text)}</td>"
-        f"<td>{_escape(row.get('reason', ''))}</td>"
-        "</tr>"
-    )
-
-
 def _research_loop_proof_row(row: dict[str, Any]) -> str:
     status = str(row.get("status", ""))
     status_class = "good" if status == "Proven" else "warn" if "sample" in status.lower() else ""
@@ -3697,23 +2273,6 @@ def _research_loop_proof_row(row: dict[str, Any]) -> str:
         f"<td>{int(float(row.get('trades', 0) or 0))}</td>"
         f"<td>{_pct(row.get('win_rate_pct', 0.0))}</td>"
         f"<td>${float(row.get('monthly_per_1k', 0.0) or 0.0):.2f}</td>"
-        f'<td class="{status_class}">{_escape(status)}</td>'
-        "</tr>"
-    )
-
-
-def _research_grid_proof_row(row: dict[str, Any]) -> str:
-    status = str(row.get("status", ""))
-    status_class = "good" if status == "Proven" else "warn"
-    return (
-        "<tr>"
-        f"<td>{_escape(row.get('symbol', ''))}</td>"
-        f"<td><span class=\"pill\">{_escape(row.get('preset_name', ''))}</span></td>"
-        f"<td>{_escape(row.get('setup', ''))}</td>"
-        f"<td>{_pct(row.get('win_rate_pct', 0.0))}</td>"
-        f"<td>{_signed_pct(row.get('monthly_pct', 0.0))}</td>"
-        f"<td>{_signed_pct(row.get('worst_drawdown_pct', 0.0))}</td>"
-        f"<td>{float(row.get('alerts_per_month', 0.0) or 0.0):.1f}</td>"
         f'<td class="{status_class}">{_escape(status)}</td>'
         "</tr>"
     )
@@ -3961,41 +2520,7 @@ def _backtest_svg(bot: str, row: dict[str, Any]) -> str:
 def _best_backtest_card(bot: str, row: dict[str, Any] | None) -> str:
     if not row:
         return '<div class="muted">Run a coin to get one exact Bitsgap setup here.</div>'
-    if bot == "loop":
-        return _best_loop_card(row)
-    return _best_grid_card(row)
-
-
-def _best_grid_card(row: dict[str, Any]) -> str:
-    symbol = row.get("symbol", "")
-    proof = [
-        ("Win Rate", _pct(row.get("win_rate_pct", 0.0))),
-        ("Valid Starts", int(float(row.get("starts", 0) or 0))),
-        ("Est. Monthly", _signed_pct(row.get("avg_monthly_pct", 0.0))),
-        ("Worst DD", _signed_pct(row.get("worst_max_drawdown_pct", 0.0))),
-    ]
-    fields = [
-        ("Exchange", "Kraken"),
-        ("Pair", symbol),
-        ("Timeframe", row.get("timeframe", "")),
-        ("Low Price", _price(row.get("low_price", 0.0))),
-        ("High Price", _price(row.get("high_price", 0.0))),
-        ("Grid Step", _pct_trim(row.get("grid_step_pct", 0.0))),
-        ("Grid Levels", int(float(row.get("levels", 0) or 0))),
-        ("Order Size Currency", row.get("order_size_currency", "")),
-        ("Trailing Up", "On"),
-        ("Pump Protection", "On"),
-        ("Trailing Down", "Off"),
-        ("Stop Loss", f"On (-{_pct_trim(row.get('stop_loss_pct', 0.0))})"),
-        ("Take Profit", f"On (+{_pct_trim(row.get('take_profit_pct', 0.0))})"),
-    ]
-    return (
-        '<div class="setup-card">'
-        f'<div><div class="setup-title">GRID { _escape(symbol) }</div><div class="muted">Copy these into Bitsgap Create GRID Bot.</div></div>'
-        f'<div class="setup-fields">{"".join(_setup_field(name, value) for name, value in fields)}</div>'
-        f'<div class="proof-list">{"".join(_setup_field(name, value) for name, value in proof)}</div>'
-        "</div>"
-    )
+    return _best_loop_card(row)
 
 
 def _best_loop_card(row: dict[str, Any]) -> str:
@@ -4030,26 +2555,6 @@ def _setup_field(name: str, value: Any) -> str:
         f'<div class="name">{_escape(name)}</div>'
         f'<div class="setting">{_escape(value)}</div>'
         "</div>"
-    )
-
-
-def _backtest_grid_row(row: dict[str, Any]) -> str:
-    score = float(row.get("optimizer_score", 0.0) or 0.0)
-    return (
-        "<tr>"
-        f"<td>{_escape(row.get('symbol', ''))}</td>"
-        f"<td>{_escape(row.get('timeframe', ''))}</td>"
-        f"<td>{_price(row.get('low_price', 0.0))}</td>"
-        f"<td>{_price(row.get('high_price', 0.0))}</td>"
-        f"<td>{int(float(row.get('levels', 0) or 0))}</td>"
-        f"<td>{_pct_trim(row.get('grid_step_pct', 0.0))}</td>"
-        f"<td>+{_pct_trim(row.get('take_profit_pct', 0.0))} / -{_pct_trim(row.get('stop_loss_pct', 0.0))}</td>"
-        f"<td>{int(float(row.get('starts', 0) or 0))}</td>"
-        f"<td>{_pct(row.get('win_rate_pct', 0.0))}</td>"
-        f"<td>{_signed_pct(row.get('avg_monthly_pct', 0.0))}</td>"
-        f"<td>{_signed_pct(row.get('worst_max_drawdown_pct', 0.0))}</td>"
-        f"<td>{score:.2f}</td>"
-        "</tr>"
     )
 
 
@@ -4171,61 +2676,6 @@ def _loop_scan_row(row: dict[str, Any]) -> str:
         f"<td>{_escape(row.get('mode', ''))}</td>"
         f"<td>{_price(row.get('price', 0.0))}</td>"
         f"<td>{_escape(row.get('reason', 'waiting for scan'))}</td>"
-        "</tr>"
-    )
-
-
-def _grid_scan_row(row: dict[str, Any]) -> str:
-    status = "Ready" if row.get("ready") else "Waiting"
-    if row.get("active"):
-        status = "Active paper"
-    status_class = "good" if row.get("ready") else ""
-    setup_type = "Experimental" if row.get("experimental") else "Proven"
-    return (
-        "<tr>"
-        f"<td>{_escape(row.get('symbol', ''))}</td>"
-        f"<td><span class=\"pill\">{_escape(row.get('preset_name', ''))}</span></td>"
-        f"<td>{_escape(setup_type)}</td>"
-        f"<td>{int(float(row.get('score', 0)))}/100</td>"
-        f'<td class="{status_class}">{_escape(status)}</td>'
-        f"<td>{_price(row.get('current_price', 0.0))}</td>"
-        f"<td>{float(row.get('historical_monthly_pct', 0.0) or 0.0):+.2f}%</td>"
-        f"<td>{'yes' if row.get('cooldown') else 'no'}</td>"
-        f"<td>{_escape(row.get('reason', ''))}</td>"
-        "</tr>"
-    )
-
-
-def _grid_active_row(row: dict[str, Any]) -> str:
-    return (
-        "<tr>"
-        f"<td>{_escape(row.get('symbol', ''))}</td>"
-        f"<td><span class=\"pill\">{_escape(row.get('preset_name', ''))}</span></td>"
-        f"<td>{_price(row.get('entry_price', 0.0))}</td>"
-        f"<td>{_price(row.get('take_profit_price', 0.0))}</td>"
-        f"<td>{_price(row.get('stop_loss_price', 0.0))}</td>"
-        f"<td>{_escape(row.get('grid_step_pct', ''))}%</td>"
-        f"<td>{_escape(row.get('levels', ''))}</td>"
-        f"<td>{_local_time_html(row.get('opened_at', ''), 'datetime')}</td>"
-        "</tr>"
-    )
-
-
-def _grid_closed_row(row: dict[str, Any]) -> str:
-    event = "Win" if row.get("event") == "GRID_TAKE_PROFIT" else "Loss"
-    result_class = "good" if event == "Win" else "bad"
-    net = float(row.get("net_return_pct", 0.0))
-    return (
-        "<tr>"
-        f"<td>{_escape(row.get('symbol', ''))}</td>"
-        f'<td class="{result_class}">{event}</td>'
-        f"<td><span class=\"pill\">{_escape(row.get('preset_name', ''))}</span></td>"
-        f"<td>{_price(row.get('entry_price', 0.0))}</td>"
-        f"<td>{_price(row.get('exit_price', 0.0))}</td>"
-        f"<td class=\"{'good' if net >= 0 else 'bad'}\">{_signed_pct(net)}</td>"
-        f"<td>{_escape(row.get('grid_step_pct', ''))}%</td>"
-        f"<td>{_local_time_html(row.get('event_at', ''), 'datetime')}</td>"
-        f"<td>{_escape(row.get('exit_reason', ''))}</td>"
         "</tr>"
     )
 

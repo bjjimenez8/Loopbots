@@ -1,11 +1,10 @@
 {
   "version": "adaptive-proof-v1",
-  "generated_at": "2026-07-14T22:53:50.906041+00:00",
+  "generated_at": "2026-07-14T23:06:35.363195+00:00",
   "history_source": "OKX public candles for Kraken-listed spot symbols",
   "method": "first-half selection, untouched second-half validation, non-overlapping starts",
   "fees": {
-    "loop_round_trip_pct": 0.5,
-    "grid_per_fill_pct": 0.25
+    "loop_round_trip_pct": 0.5
   },
   "profiles": [
     {
@@ -56,59 +55,6 @@
         "validation win rate at least 65%",
         "validation average return at least 0.25%",
         "validation profit factor at least 1.15"
-      ]
-    },
-    {
-      "bot": "GRID",
-      "symbol": "ADA/USDT",
-      "status": "Needs stronger proof",
-      "proof_model": "adaptive-proof-v1",
-      "settings": {
-        "name": "long_range",
-        "timeframe": "1h",
-        "hold_days": 30,
-        "lookback_days": 45,
-        "lower_pct": 18.0,
-        "upper_pct": 35.0,
-        "levels": 20,
-        "take_profit_pct": 10.0,
-        "stop_loss_pct": 10.0,
-        "launch_filter": "sideways"
-      },
-      "fee_pct": 0.25,
-      "historical_starts": 2,
-      "historical_non_overlapping": true,
-      "train": {
-        "starts": 1,
-        "win_rate_pct": 100.0,
-        "avg_return_pct": 10.07,
-        "avg_win_pct": 10.07,
-        "avg_loss_pct": 0.0,
-        "profit_factor": 1007.0,
-        "worst_return_pct": 10.07,
-        "worst_drawdown_pct": -7.26,
-        "avg_cycles": 22.0,
-        "monthly_pct": 10.07
-      },
-      "test": {
-        "starts": 1,
-        "win_rate_pct": 0.0,
-        "avg_return_pct": -12.91,
-        "avg_win_pct": 0.0,
-        "avg_loss_pct": -12.91,
-        "profit_factor": 0.0,
-        "worst_return_pct": -12.91,
-        "worst_drawdown_pct": -14.52,
-        "avg_cycles": 6.0,
-        "monthly_pct": -12.91
-      },
-      "failed_checks": [
-        "at least 8 non-overlapping starts in each half",
-        "positive average return in both halves",
-        "validation win rate at least 65%",
-        "validation average return at least 0.25%",
-        "validation profit factor at least 1.15",
-        "validation worst drawdown within limit"
       ]
     },
     {
@@ -163,58 +109,6 @@
       ]
     },
     {
-      "bot": "GRID",
-      "symbol": "ALGO/USDT",
-      "status": "Needs stronger proof",
-      "proof_model": "adaptive-proof-v1",
-      "settings": {
-        "name": "long_range",
-        "timeframe": "1h",
-        "hold_days": 30,
-        "lookback_days": 45,
-        "lower_pct": 18.0,
-        "upper_pct": 35.0,
-        "levels": 20,
-        "take_profit_pct": 10.0,
-        "stop_loss_pct": 10.0,
-        "launch_filter": "sideways"
-      },
-      "fee_pct": 0.25,
-      "historical_starts": 2,
-      "historical_non_overlapping": true,
-      "train": {
-        "starts": 2,
-        "win_rate_pct": 50.0,
-        "avg_return_pct": 4.35,
-        "avg_win_pct": 4.35,
-        "avg_loss_pct": -0.18,
-        "profit_factor": 27.81,
-        "worst_return_pct": -1.31,
-        "worst_drawdown_pct": -9.57,
-        "avg_cycles": 21.5,
-        "monthly_pct": 4.35
-      },
-      "test": {
-        "starts": 0,
-        "win_rate_pct": 0.0,
-        "avg_return_pct": 0.0,
-        "avg_win_pct": 0.0,
-        "avg_loss_pct": 0.0,
-        "profit_factor": 0.0,
-        "worst_return_pct": 0.0,
-        "worst_drawdown_pct": 0.0,
-        "avg_cycles": 0.0,
-        "monthly_pct": 0.0
-      },
-      "failed_checks": [
-        "at least 8 non-overlapping starts in each half",
-        "positive average return in both halves",
-        "validation win rate at least 65%",
-        "validation average return at least 0.25%",
-        "validation profit factor at least 1.15"
-      ]
-    },
-    {
       "bot": "LOOP",
       "symbol": "AVAX/USDT",
       "status": "Needs stronger proof",
@@ -258,58 +152,6 @@
         "monthly_pct": -6.22
       },
       "failed_checks": [
-        "positive average return in both halves",
-        "validation win rate at least 65%",
-        "validation average return at least 0.25%",
-        "validation profit factor at least 1.15"
-      ]
-    },
-    {
-      "bot": "GRID",
-      "symbol": "AVAX/USDT",
-      "status": "Needs stronger proof",
-      "proof_model": "adaptive-proof-v1",
-      "settings": {
-        "name": "wide_range",
-        "timeframe": "1h",
-        "hold_days": 21,
-        "lookback_days": 30,
-        "lower_pct": 10.0,
-        "upper_pct": 25.0,
-        "levels": 30,
-        "take_profit_pct": 8.0,
-        "stop_loss_pct": 8.0,
-        "launch_filter": "strict-sideways"
-      },
-      "fee_pct": 0.25,
-      "historical_starts": 0,
-      "historical_non_overlapping": true,
-      "train": {
-        "starts": 0,
-        "win_rate_pct": 0.0,
-        "avg_return_pct": 0.0,
-        "avg_win_pct": 0.0,
-        "avg_loss_pct": 0.0,
-        "profit_factor": 0.0,
-        "worst_return_pct": 0.0,
-        "worst_drawdown_pct": 0.0,
-        "avg_cycles": 0.0,
-        "monthly_pct": 0.0
-      },
-      "test": {
-        "starts": 0,
-        "win_rate_pct": 0.0,
-        "avg_return_pct": 0.0,
-        "avg_win_pct": 0.0,
-        "avg_loss_pct": 0.0,
-        "profit_factor": 0.0,
-        "worst_return_pct": 0.0,
-        "worst_drawdown_pct": 0.0,
-        "avg_cycles": 0.0,
-        "monthly_pct": 0.0
-      },
-      "failed_checks": [
-        "at least 8 non-overlapping starts in each half",
         "positive average return in both halves",
         "validation win rate at least 65%",
         "validation average return at least 0.25%",
@@ -362,57 +204,6 @@
       "failed_checks": []
     },
     {
-      "bot": "GRID",
-      "symbol": "BNB/USDT",
-      "status": "Needs stronger proof",
-      "proof_model": "adaptive-proof-v1",
-      "settings": {
-        "name": "short_range",
-        "timeframe": "1h",
-        "hold_days": 7,
-        "lookback_days": 14,
-        "lower_pct": 8.0,
-        "upper_pct": 12.0,
-        "levels": 20,
-        "take_profit_pct": 5.0,
-        "stop_loss_pct": 5.0,
-        "launch_filter": "strict-sideways"
-      },
-      "fee_pct": 0.25,
-      "historical_starts": 33,
-      "historical_non_overlapping": true,
-      "train": {
-        "starts": 17,
-        "win_rate_pct": 64.71,
-        "avg_return_pct": 0.08,
-        "avg_win_pct": 0.08,
-        "avg_loss_pct": -5.1,
-        "profit_factor": 0.71,
-        "worst_return_pct": -6.23,
-        "worst_drawdown_pct": -7.11,
-        "avg_cycles": 25.2,
-        "monthly_pct": 0.34
-      },
-      "test": {
-        "starts": 16,
-        "win_rate_pct": 56.25,
-        "avg_return_pct": -0.45,
-        "avg_win_pct": 0.0,
-        "avg_loss_pct": -5.45,
-        "profit_factor": 0.42,
-        "worst_return_pct": -8.51,
-        "worst_drawdown_pct": -8.88,
-        "avg_cycles": 13.3,
-        "monthly_pct": -1.91
-      },
-      "failed_checks": [
-        "positive average return in both halves",
-        "validation win rate at least 65%",
-        "validation average return at least 0.25%",
-        "validation profit factor at least 1.15"
-      ]
-    },
-    {
       "bot": "LOOP",
       "symbol": "BTC/USDT",
       "status": "Needs stronger proof",
@@ -456,58 +247,6 @@
         "monthly_pct": -1.22
       },
       "failed_checks": [
-        "positive average return in both halves",
-        "validation win rate at least 65%",
-        "validation average return at least 0.25%",
-        "validation profit factor at least 1.15"
-      ]
-    },
-    {
-      "bot": "GRID",
-      "symbol": "BTC/USDT",
-      "status": "Needs stronger proof",
-      "proof_model": "adaptive-proof-v1",
-      "settings": {
-        "name": "wide_range",
-        "timeframe": "1h",
-        "hold_days": 21,
-        "lookback_days": 30,
-        "lower_pct": 10.0,
-        "upper_pct": 25.0,
-        "levels": 30,
-        "take_profit_pct": 8.0,
-        "stop_loss_pct": 8.0,
-        "launch_filter": "strict-sideways"
-      },
-      "fee_pct": 0.25,
-      "historical_starts": 8,
-      "historical_non_overlapping": true,
-      "train": {
-        "starts": 4,
-        "win_rate_pct": 75.0,
-        "avg_return_pct": 2.14,
-        "avg_win_pct": 2.14,
-        "avg_loss_pct": -4.86,
-        "profit_factor": 2.19,
-        "worst_return_pct": -8.09,
-        "worst_drawdown_pct": -10.39,
-        "avg_cycles": 41.8,
-        "monthly_pct": 3.06
-      },
-      "test": {
-        "starts": 4,
-        "win_rate_pct": 50.0,
-        "avg_return_pct": -2.34,
-        "avg_win_pct": 0.0,
-        "avg_loss_pct": -8.46,
-        "profit_factor": 0.31,
-        "worst_return_pct": -8.58,
-        "worst_drawdown_pct": -9.68,
-        "avg_cycles": 25.2,
-        "monthly_pct": -3.34
-      },
-      "failed_checks": [
-        "at least 8 non-overlapping starts in each half",
         "positive average return in both halves",
         "validation win rate at least 65%",
         "validation average return at least 0.25%",
@@ -562,54 +301,6 @@
       ]
     },
     {
-      "bot": "GRID",
-      "symbol": "DOGE/USDT",
-      "status": "Needs stronger proof",
-      "proof_model": "adaptive-proof-v1",
-      "settings": {
-        "name": "mid_range",
-        "timeframe": "1h",
-        "hold_days": 14,
-        "lookback_days": 21,
-        "lower_pct": 12.0,
-        "upper_pct": 20.0,
-        "levels": 20,
-        "take_profit_pct": 8.0,
-        "stop_loss_pct": 7.0,
-        "launch_filter": "sideways"
-      },
-      "fee_pct": 0.25,
-      "historical_starts": 12,
-      "historical_non_overlapping": true,
-      "train": {
-        "starts": 6,
-        "win_rate_pct": 83.33,
-        "avg_return_pct": 3.55,
-        "avg_win_pct": 3.55,
-        "avg_loss_pct": -2.4,
-        "profit_factor": 8.7,
-        "worst_return_pct": -7.08,
-        "worst_drawdown_pct": -8.1,
-        "avg_cycles": 34.5,
-        "monthly_pct": 7.62
-      },
-      "test": {
-        "starts": 6,
-        "win_rate_pct": 66.67,
-        "avg_return_pct": 1.71,
-        "avg_win_pct": 1.71,
-        "avg_loss_pct": -4.46,
-        "profit_factor": 1.45,
-        "worst_return_pct": -8.23,
-        "worst_drawdown_pct": -8.85,
-        "avg_cycles": 26.8,
-        "monthly_pct": 3.66
-      },
-      "failed_checks": [
-        "at least 8 non-overlapping starts in each half"
-      ]
-    },
-    {
       "bot": "LOOP",
       "symbol": "ETH/USDT",
       "status": "Needs stronger proof",
@@ -653,58 +344,6 @@
         "monthly_pct": -7.25
       },
       "failed_checks": [
-        "positive average return in both halves",
-        "validation win rate at least 65%",
-        "validation average return at least 0.25%",
-        "validation profit factor at least 1.15"
-      ]
-    },
-    {
-      "bot": "GRID",
-      "symbol": "ETH/USDT",
-      "status": "Needs stronger proof",
-      "proof_model": "adaptive-proof-v1",
-      "settings": {
-        "name": "wide_profit",
-        "timeframe": "1h",
-        "hold_days": 30,
-        "lookback_days": 45,
-        "lower_pct": 20.0,
-        "upper_pct": 40.0,
-        "levels": 30,
-        "take_profit_pct": 12.0,
-        "stop_loss_pct": 10.0,
-        "launch_filter": "strict-sideways"
-      },
-      "fee_pct": 0.25,
-      "historical_starts": 1,
-      "historical_non_overlapping": true,
-      "train": {
-        "starts": 1,
-        "win_rate_pct": 100.0,
-        "avg_return_pct": 12.01,
-        "avg_win_pct": 12.01,
-        "avg_loss_pct": 0.0,
-        "profit_factor": 1201.0,
-        "worst_return_pct": 12.01,
-        "worst_drawdown_pct": -3.75,
-        "avg_cycles": 59.0,
-        "monthly_pct": 12.01
-      },
-      "test": {
-        "starts": 0,
-        "win_rate_pct": 0.0,
-        "avg_return_pct": 0.0,
-        "avg_win_pct": 0.0,
-        "avg_loss_pct": 0.0,
-        "profit_factor": 0.0,
-        "worst_return_pct": 0.0,
-        "worst_drawdown_pct": 0.0,
-        "avg_cycles": 0.0,
-        "monthly_pct": 0.0
-      },
-      "failed_checks": [
-        "at least 8 non-overlapping starts in each half",
         "positive average return in both halves",
         "validation win rate at least 65%",
         "validation average return at least 0.25%",
@@ -762,54 +401,6 @@
       ]
     },
     {
-      "bot": "GRID",
-      "symbol": "LINK/USDT",
-      "status": "Needs stronger proof",
-      "proof_model": "adaptive-proof-v1",
-      "settings": {
-        "name": "long_range",
-        "timeframe": "1h",
-        "hold_days": 30,
-        "lookback_days": 45,
-        "lower_pct": 18.0,
-        "upper_pct": 35.0,
-        "levels": 20,
-        "take_profit_pct": 10.0,
-        "stop_loss_pct": 10.0,
-        "launch_filter": "sideways"
-      },
-      "fee_pct": 0.25,
-      "historical_starts": 3,
-      "historical_non_overlapping": true,
-      "train": {
-        "starts": 1,
-        "win_rate_pct": 100.0,
-        "avg_return_pct": 10.01,
-        "avg_win_pct": 10.01,
-        "avg_loss_pct": 0.0,
-        "profit_factor": 1001.0,
-        "worst_return_pct": 10.01,
-        "worst_drawdown_pct": -7.35,
-        "avg_cycles": 22.0,
-        "monthly_pct": 10.01
-      },
-      "test": {
-        "starts": 2,
-        "win_rate_pct": 100.0,
-        "avg_return_pct": 3.16,
-        "avg_win_pct": 3.16,
-        "avg_loss_pct": 0.0,
-        "profit_factor": 316.0,
-        "worst_return_pct": 2.82,
-        "worst_drawdown_pct": -7.51,
-        "avg_cycles": 19.5,
-        "monthly_pct": 3.16
-      },
-      "failed_checks": [
-        "at least 8 non-overlapping starts in each half"
-      ]
-    },
-    {
       "bot": "LOOP",
       "symbol": "LTC/USDT",
       "status": "Needs stronger proof",
@@ -860,58 +451,6 @@
       ]
     },
     {
-      "bot": "GRID",
-      "symbol": "LTC/USDT",
-      "status": "Needs stronger proof",
-      "proof_model": "adaptive-proof-v1",
-      "settings": {
-        "name": "mid_range",
-        "timeframe": "1h",
-        "hold_days": 14,
-        "lookback_days": 21,
-        "lower_pct": 12.0,
-        "upper_pct": 20.0,
-        "levels": 20,
-        "take_profit_pct": 8.0,
-        "stop_loss_pct": 7.0,
-        "launch_filter": "sideways"
-      },
-      "fee_pct": 0.25,
-      "historical_starts": 21,
-      "historical_non_overlapping": true,
-      "train": {
-        "starts": 9,
-        "win_rate_pct": 77.78,
-        "avg_return_pct": 1.46,
-        "avg_win_pct": 1.46,
-        "avg_loss_pct": -7.39,
-        "profit_factor": 1.9,
-        "worst_return_pct": -8.5,
-        "worst_drawdown_pct": -8.63,
-        "avg_cycles": 28.0,
-        "monthly_pct": 3.14
-      },
-      "test": {
-        "starts": 12,
-        "win_rate_pct": 41.67,
-        "avg_return_pct": -5.17,
-        "avg_win_pct": 0.0,
-        "avg_loss_pct": -8.93,
-        "profit_factor": 0.15,
-        "worst_return_pct": -51.29,
-        "worst_drawdown_pct": -53.79,
-        "avg_cycles": 15.3,
-        "monthly_pct": -11.09
-      },
-      "failed_checks": [
-        "positive average return in both halves",
-        "validation win rate at least 65%",
-        "validation average return at least 0.25%",
-        "validation profit factor at least 1.15",
-        "validation worst drawdown within limit"
-      ]
-    },
-    {
       "bot": "LOOP",
       "symbol": "SOL/USDT",
       "status": "Needs stronger proof",
@@ -959,54 +498,6 @@
         "validation win rate at least 65%",
         "validation average return at least 0.25%",
         "validation profit factor at least 1.15"
-      ]
-    },
-    {
-      "bot": "GRID",
-      "symbol": "SOL/USDT",
-      "status": "Needs stronger proof",
-      "proof_model": "adaptive-proof-v1",
-      "settings": {
-        "name": "long_range",
-        "timeframe": "1h",
-        "hold_days": 30,
-        "lookback_days": 45,
-        "lower_pct": 18.0,
-        "upper_pct": 35.0,
-        "levels": 20,
-        "take_profit_pct": 10.0,
-        "stop_loss_pct": 10.0,
-        "launch_filter": "sideways"
-      },
-      "fee_pct": 0.25,
-      "historical_starts": 4,
-      "historical_non_overlapping": true,
-      "train": {
-        "starts": 1,
-        "win_rate_pct": 100.0,
-        "avg_return_pct": 10.04,
-        "avg_win_pct": 10.04,
-        "avg_loss_pct": 0.0,
-        "profit_factor": 1004.0,
-        "worst_return_pct": 10.04,
-        "worst_drawdown_pct": -5.64,
-        "avg_cycles": 25.0,
-        "monthly_pct": 10.04
-      },
-      "test": {
-        "starts": 3,
-        "win_rate_pct": 66.67,
-        "avg_return_pct": 0.26,
-        "avg_win_pct": 0.26,
-        "avg_loss_pct": -8.66,
-        "profit_factor": 1.16,
-        "worst_return_pct": -11.35,
-        "worst_drawdown_pct": -11.47,
-        "avg_cycles": 14.3,
-        "monthly_pct": 0.26
-      },
-      "failed_checks": [
-        "at least 8 non-overlapping starts in each half"
       ]
     },
     {
@@ -1061,59 +552,6 @@
       ]
     },
     {
-      "bot": "GRID",
-      "symbol": "TON/USDT",
-      "status": "Needs stronger proof",
-      "proof_model": "adaptive-proof-v1",
-      "settings": {
-        "name": "wide_range",
-        "timeframe": "1h",
-        "hold_days": 21,
-        "lookback_days": 30,
-        "lower_pct": 10.0,
-        "upper_pct": 25.0,
-        "levels": 30,
-        "take_profit_pct": 8.0,
-        "stop_loss_pct": 8.0,
-        "launch_filter": "strict-sideways"
-      },
-      "fee_pct": 0.25,
-      "historical_starts": 3,
-      "historical_non_overlapping": true,
-      "train": {
-        "starts": 1,
-        "win_rate_pct": 100.0,
-        "avg_return_pct": 2.47,
-        "avg_win_pct": 2.47,
-        "avg_loss_pct": 0.0,
-        "profit_factor": 247.0,
-        "worst_return_pct": 2.47,
-        "worst_drawdown_pct": -8.12,
-        "avg_cycles": 120.0,
-        "monthly_pct": 3.53
-      },
-      "test": {
-        "starts": 2,
-        "win_rate_pct": 50.0,
-        "avg_return_pct": -5.38,
-        "avg_win_pct": 0.0,
-        "avg_loss_pct": -14.04,
-        "profit_factor": 0.19,
-        "worst_return_pct": -16.2,
-        "worst_drawdown_pct": -16.92,
-        "avg_cycles": 38.5,
-        "monthly_pct": -7.69
-      },
-      "failed_checks": [
-        "at least 8 non-overlapping starts in each half",
-        "positive average return in both halves",
-        "validation win rate at least 65%",
-        "validation average return at least 0.25%",
-        "validation profit factor at least 1.15",
-        "validation worst drawdown within limit"
-      ]
-    },
-    {
       "bot": "LOOP",
       "symbol": "XAUT/USDT",
       "status": "Proven",
@@ -1157,55 +595,6 @@
         "monthly_pct": 3.34
       },
       "failed_checks": []
-    },
-    {
-      "bot": "GRID",
-      "symbol": "XAUT/USDT",
-      "status": "Needs stronger proof",
-      "proof_model": "adaptive-proof-v1",
-      "settings": {
-        "name": "mid_range",
-        "timeframe": "1h",
-        "hold_days": 14,
-        "lookback_days": 21,
-        "lower_pct": 12.0,
-        "upper_pct": 20.0,
-        "levels": 20,
-        "take_profit_pct": 8.0,
-        "stop_loss_pct": 7.0,
-        "launch_filter": "sideways"
-      },
-      "fee_pct": 0.25,
-      "historical_starts": 28,
-      "historical_non_overlapping": true,
-      "train": {
-        "starts": 14,
-        "win_rate_pct": 78.57,
-        "avg_return_pct": 0.68,
-        "avg_win_pct": 0.68,
-        "avg_loss_pct": -1.29,
-        "profit_factor": 5.73,
-        "worst_return_pct": -1.45,
-        "worst_drawdown_pct": -5.7,
-        "avg_cycles": 4.9,
-        "monthly_pct": 1.46
-      },
-      "test": {
-        "starts": 14,
-        "win_rate_pct": 64.29,
-        "avg_return_pct": 0.09,
-        "avg_win_pct": 0.09,
-        "avg_loss_pct": -2.47,
-        "profit_factor": 1.99,
-        "worst_return_pct": -8.92,
-        "worst_drawdown_pct": -9.14,
-        "avg_cycles": 3.6,
-        "monthly_pct": 0.18
-      },
-      "failed_checks": [
-        "validation win rate at least 65%",
-        "validation average return at least 0.25%"
-      ]
     },
     {
       "bot": "LOOP",
@@ -1255,59 +644,6 @@
         "validation win rate at least 65%",
         "validation average return at least 0.25%",
         "validation profit factor at least 1.15"
-      ]
-    },
-    {
-      "bot": "GRID",
-      "symbol": "XRP/USDT",
-      "status": "Needs stronger proof",
-      "proof_model": "adaptive-proof-v1",
-      "settings": {
-        "name": "wide_range",
-        "timeframe": "1h",
-        "hold_days": 21,
-        "lookback_days": 30,
-        "lower_pct": 10.0,
-        "upper_pct": 25.0,
-        "levels": 30,
-        "take_profit_pct": 8.0,
-        "stop_loss_pct": 8.0,
-        "launch_filter": "strict-sideways"
-      },
-      "fee_pct": 0.25,
-      "historical_starts": 3,
-      "historical_non_overlapping": true,
-      "train": {
-        "starts": 0,
-        "win_rate_pct": 0.0,
-        "avg_return_pct": 0.0,
-        "avg_win_pct": 0.0,
-        "avg_loss_pct": 0.0,
-        "profit_factor": 0.0,
-        "worst_return_pct": 0.0,
-        "worst_drawdown_pct": 0.0,
-        "avg_cycles": 0.0,
-        "monthly_pct": 0.0
-      },
-      "test": {
-        "starts": 3,
-        "win_rate_pct": 33.33,
-        "avg_return_pct": -3.72,
-        "avg_win_pct": 0.0,
-        "avg_loss_pct": -10.51,
-        "profit_factor": 0.19,
-        "worst_return_pct": -11.11,
-        "worst_drawdown_pct": -12.29,
-        "avg_cycles": 20.7,
-        "monthly_pct": -5.31
-      },
-      "failed_checks": [
-        "at least 8 non-overlapping starts in each half",
-        "positive average return in both halves",
-        "validation win rate at least 65%",
-        "validation average return at least 0.25%",
-        "validation profit factor at least 1.15",
-        "validation worst drawdown within limit"
       ]
     }
   ]

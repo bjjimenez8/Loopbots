@@ -57,9 +57,6 @@ class AdaptiveProofRegistry:
     def loop_proof_for(self, live_row: dict[str, Any]) -> dict[str, Any]:
         return self._matching_profile("LOOP", live_row)
 
-    def grid_proof_for(self, live_row: dict[str, Any]) -> dict[str, Any]:
-        return self._matching_profile("GRID", live_row)
-
     def proven_profiles(self, bot: str, symbol: str = "") -> list[dict[str, Any]]:
         return [
             profile
@@ -96,13 +93,7 @@ def _settings_match(bot: str, settings: dict[str, Any], row: dict[str, Any]) -> 
             ("stop_loss_pct", "monitored_stop_loss_pct"),
         )
     else:
-        pairs = (
-            ("lower_pct", "lower_pct"),
-            ("upper_pct", "upper_pct"),
-            ("levels", "levels"),
-            ("take_profit_pct", "take_profit_pct"),
-            ("stop_loss_pct", "stop_loss_pct"),
-        )
+        return False
     return all(_numbers_match(settings.get(proof_key), row.get(live_key)) for proof_key, live_key in pairs)
 
 
@@ -119,10 +110,7 @@ def _setup_text(bot: str, settings: dict[str, Any]) -> str:
             f"{settings.get('timeframe', '')} {settings.get('order_distance_pct', '')}% LOOP, "
             f"TP {settings.get('take_profit_pct', '')}% / SL {settings.get('stop_loss_pct', '')}%"
         )
-    return (
-        f"{settings.get('timeframe', '')} -{settings.get('lower_pct', '')}% / +{settings.get('upper_pct', '')}%, "
-        f"{settings.get('levels', '')} levels"
-    )
+    return ""
 
 
 def adaptive_loop_diagnostic(profile: dict[str, Any], candles: Any, live_price: float | None = None) -> dict[str, Any]:
