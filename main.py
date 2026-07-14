@@ -25,6 +25,7 @@ from news_brief import MorningBriefConfig, MorningBriefService
 from opportunity import opportunity_snapshot
 from opportunity_paper import OpportunityPaperConfig, OpportunityPaperTracker
 from paper_tracker import PaperTracker, PaperTrackingConfig
+from proof_registry import AdaptiveProofRegistry, adaptive_loop_diagnostic
 from strategy import LoopStrategy, Signal
 from telegram_alerts import TelegramAlertClient
 from trade_manager import TradeManager
@@ -55,6 +56,7 @@ def setup_logging(log_file: str) -> None:
 class LoopbotsApp:
     def __init__(self, config: dict[str, Any]) -> None:
         self.config = config
+        self.proof_registry = AdaptiveProofRegistry(PROJECT_ROOT / "adaptive_proof_registry.json")
         exchange_config = config["exchange"]
         self.discovery_config = config.get("pair_discovery", {})
         self.market_data = MarketDataClient(
@@ -123,6 +125,17 @@ class LoopbotsApp:
         self.active_setups = ActiveSetupStore(
             ActiveSetupConfig(
                 state_file=str(PROJECT_ROOT / active_setup_config.get("state_file", "data/active_setups.json")),
+            )
+        )
+        proof_config = config.get("adaptive_proof", {})
+        self.proof_market_data = MarketDataClient(
+            MarketDataConfig(
+                exchange_id=str(proof_config.get("history_exchange", "okx")),
+                enable_rate_limit=exchange_config["enable_rate_limit"],
+                sandbox=False,
+                timeframe="1h",
+                candle_limit=1200,
+                discovery_refresh_minutes=60,
             )
         )
         opportunity_paper_config = config.get("opportunity_paper", {})
@@ -214,6 +227,18 @@ class LoopbotsApp:
                     continue
 
                 symbol_diagnostics = self._loop_diagnostics(symbol, candles)
+                for profile in self.proof_registry.proven_profiles("LOOP", symbol):
+                    settings = profile.get("settings") or {}
+                    timeframe = str(settings.get("timeframe", "1h"))
+                    lookback_days = int(settings.get("lookback_days", 45) or 45)
+                    proof_candles = self.proof_market_data.fetch_ohlcv_timeframe(
+                        symbol,
+                        timeframe,
+                        max(250, lookback_days * 24 + 24),
+                    )
+                    symbol_diagnostics.append(
+                        adaptive_loop_diagnostic(profile, proof_candles, live_price=float(candles["close"].iloc[-1]))
+                    )
                 loop_diagnostics.extend(symbol_diagnostics)
                 self.loop_scan_rows.append(self._apply_loop_market_gate(self._loop_scan_row(symbol, symbol_diagnostics)))
                 entry_signal = self._analyze_entry(symbol, candles)
@@ -352,15 +377,18 @@ class LoopbotsApp:
 
     def refresh_pairs(self) -> None:
         if not self.discovery_config.get("enabled", False):
-            self.pairs = list(self.fallback_pairs)
+            self.pairs = self._merge_pairs(self.proof_registry.proven_symbols("LOOP"), self.fallback_pairs)
             return
 
         try:
             discovered_pairs = self.market_data.discover_pairs(self.discovery_config)
-            self.pairs = self._merge_pairs(discovered_pairs, self.fallback_pairs)
+            self.pairs = self._merge_pairs(
+                [*discovered_pairs, *self.proof_registry.proven_symbols("LOOP")],
+                self.fallback_pairs,
+            )
         except Exception:
             logging.exception("Failed to refresh discovered pairs, falling back to configured list")
-            self.pairs = list(self.fallback_pairs)
+            self.pairs = self._merge_pairs(self.proof_registry.proven_symbols("LOOP"), self.fallback_pairs)
 
     @staticmethod
     def _merge_pairs(primary_pairs: list[str], fallback_pairs: list[str]) -> list[str]:
@@ -453,6 +481,7 @@ class LoopbotsApp:
             "take_profit_mode": best.get("take_profit_mode", ""),
             "take_profit_pct": best.get("take_profit_pct", ""),
             "monitored_stop_loss_pct": best.get("monitored_stop_loss_pct", ""),
+            "timeframe": best.get("timeframe", ""),
         }
 
     def _sorted_loop_scan_rows(self) -> list[dict[str, Any]]:
@@ -469,8 +498,16 @@ class LoopbotsApp:
         if self.grid_watch.config.enabled and not self.grid_scan_rows:
             self._refresh_grid_scan_rows()
         snapshot = self.grid_watch.paper_snapshot(include_diagnostics=False)
-        snapshot["scanned"] = list(self.grid_scan_rows)
+        snapshot["scanned"] = [self._with_adaptive_grid_proof(row) for row in self.grid_scan_rows]
         return snapshot
+
+    def _with_adaptive_grid_proof(self, row: dict[str, Any]) -> dict[str, Any]:
+        row = {**row, "timeframe": self.grid_watch.config.timeframe}
+        proof = self.proof_registry.grid_proof_for(row)
+        row["adaptive_proof_model"] = proof.get("proof_model", "")
+        row["adaptive_proof_status"] = proof.get("status", "Needs stronger proof")
+        row["ready"] = bool(row.get("ready")) and bool(proof)
+        return row
 
     def _refresh_grid_scan_rows(self) -> None:
         try:
@@ -798,44 +835,11 @@ class LoopbotsApp:
             }
         return rows
 
-    @staticmethod
-    def _loop_research_proof() -> list[dict[str, Any]]:
-        return [
-            {"symbol": "DOGE/USDT", "setup": "1.2% LOOP, 5-20% target", "trades": 11, "win_rate_pct": 54.55, "monthly_per_1k": 19.00, "status": "Failed current proof", "target_model": "5-20"},
-            {"symbol": "SOL/USDT", "setup": "1.2% LOOP, 5-20% target", "trades": 8, "win_rate_pct": 50.00, "monthly_per_1k": 6.20, "status": "Failed current proof", "target_model": "5-20"},
-            {"symbol": "LTC/USDT", "setup": "1.5% LOOP, 5-20% target", "trades": 1, "win_rate_pct": 0.00, "monthly_per_1k": -10.80, "status": "Small failed sample", "target_model": "5-20"},
-            {"symbol": "ALGO/USDT", "setup": "2.0% LOOP, old small target", "trades": 9, "win_rate_pct": 55.56, "monthly_per_1k": 6.93, "status": "Legacy proof"},
-            {"symbol": "ETH/USDT", "setup": "2.0% LOOP, old small target", "trades": 6, "win_rate_pct": 50.00, "monthly_per_1k": 0.50, "status": "Legacy proof"},
-        ]
+    def _loop_research_proof(self) -> list[dict[str, Any]]:
+        return self.proof_registry.research_rows("LOOP")
 
     def _grid_research_proof(self) -> list[dict[str, Any]]:
-        rows = []
-        for profile in self.grid_watch.config.hot_discovery.profiles:
-            proof_current = bool(
-                profile.historical_starts >= 30
-                and profile.historical_fee_pct >= 0.25
-                and profile.historical_train_avg_return_pct > 0
-                and profile.historical_test_avg_return_pct > 0
-                and profile.historical_non_overlapping
-            )
-            rows.append(
-                {
-                    "symbol": f"{profile.base_asset}/{'|'.join(profile.allowed_quotes)}",
-                    "setup": f"-{profile.lower_pct:g}% / +{profile.upper_pct:g}%, {profile.levels} levels",
-                    "win_rate_pct": profile.historical_win_rate_pct,
-                    "monthly_pct": profile.historical_monthly_pct,
-                    "worst_drawdown_pct": profile.historical_worst_drawdown_pct,
-                    "alerts_per_month": profile.historical_alerts_per_month,
-                    "starts": profile.historical_starts,
-                    "fee_pct": profile.historical_fee_pct,
-                    "train_avg_return_pct": profile.historical_train_avg_return_pct,
-                    "test_avg_return_pct": profile.historical_test_avg_return_pct,
-                    "non_overlapping": profile.historical_non_overlapping,
-                    "status": "Proven" if proof_current else "Needs stronger proof",
-                    "preset_name": profile.preset_name,
-                }
-            )
-        return rows
+        return self.proof_registry.research_rows("GRID")
 
     def _loop_diagnostics(self, symbol: str, candles: Any) -> list[dict[str, Any]]:
         results = []
@@ -952,6 +956,7 @@ class LoopbotsApp:
             "take_profit_mode": loop_plan.get("take_profit_mode", ""),
             "take_profit_pct": loop_plan.get("take_profit_pct", ""),
             "monitored_stop_loss_pct": loop_plan.get("monitored_stop_loss_pct", ""),
+            "timeframe": strategy_mode.get("timeframe", ""),
         }
 
     @staticmethod
@@ -972,7 +977,13 @@ class LoopbotsApp:
             strategy_config.update(mode.get("strategy_overrides", {}))
             loop_settings = deepcopy(config["loop_settings"])
             loop_settings.update(mode.get("loop_settings", {}))
-            strategies.append({"mode": mode, "strategy": LoopStrategy(strategy_config, loop_settings)})
+            strategies.append(
+                {
+                    "mode": mode,
+                    "strategy": LoopStrategy(strategy_config, loop_settings),
+                    "timeframe": config.get("exchange", {}).get("timeframe", ""),
+                }
+            )
         return strategies
 
     @staticmethod

@@ -45,11 +45,27 @@ class MarketDataClient:
 
     def fetch_ohlcv_timeframe(self, symbol: str, timeframe: str, limit: int) -> pd.DataFrame:
         LOGGER.debug("Fetching %s candles for %s", timeframe, symbol)
-        rows: list[list[Any]] = self.exchange.fetch_ohlcv(
-            symbol,
-            timeframe=timeframe,
-            limit=limit,
-        )
+        if limit <= 720:
+            rows: list[list[Any]] = self.exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
+        else:
+            timeframe_ms = int(self.exchange.parse_timeframe(timeframe) * 1000)
+            since = self.exchange.milliseconds() - (limit * timeframe_ms)
+            rows = []
+            while len(rows) < limit:
+                batch_limit = min(720, limit - len(rows))
+                batch = self.exchange.fetch_ohlcv(
+                    symbol,
+                    timeframe=timeframe,
+                    since=since,
+                    limit=batch_limit,
+                )
+                if not batch:
+                    break
+                rows.extend(batch)
+                next_since = int(batch[-1][0]) + timeframe_ms
+                if next_since <= since:
+                    break
+                since = next_since
 
         if not rows:
             raise RuntimeError(f"No OHLCV data returned for {symbol}")
@@ -62,7 +78,7 @@ class MarketDataClient:
         for column in ["open", "high", "low", "close", "volume"]:
             df[column] = pd.to_numeric(df[column], errors="coerce")
 
-        return df.dropna().reset_index(drop=True)
+        return df.dropna().drop_duplicates(subset=["timestamp"]).sort_values("timestamp").tail(limit).reset_index(drop=True)
 
     def discover_pairs(self, discovery_config: dict[str, Any]) -> list[str]:
         self._ensure_markets_loaded()

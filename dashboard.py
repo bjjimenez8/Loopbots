@@ -552,7 +552,7 @@ def _render_ready_right_now_dashboard(snapshot: dict[str, Any], payload: dict[st
     opportunities = payload.get("opportunities", [])
     active_setups = snapshot.get("active_setups", {})
     generated_at = payload.get("generated_at", snapshot.get("generated_at", ""))
-    ready = [row for row in opportunities if _deploy_action(row) != "AVOID"]
+    ready = [row for row in opportunities if row.get("status") == "Ready Now"]
     grid_ready = [row for row in ready if str(row.get("strategy", "")).upper() == "GRID"]
     loop_ready = [row for row in ready if str(row.get("strategy", "")).upper() == "LOOP"]
     grid_cards = "".join(_ready_setup_card(row) for row in grid_ready) or _no_ready_card("GRID")

@@ -253,7 +253,8 @@ class LoopStrategy:
 
     @property
     def _range_lookback(self) -> int:
-        return max(self.config["pullback_lookback"] * 3, 12)
+        configured = int(self.config.get("range_lookback_bars", 0) or 0)
+        return max(configured, self.config["pullback_lookback"] * 3, 12)
 
     def _with_indicators(self, candles: pd.DataFrame) -> pd.DataFrame:
         df = candles.copy()

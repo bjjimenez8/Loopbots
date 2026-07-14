@@ -23,9 +23,9 @@ GRID_MAX_WORST_DRAWDOWN_PCT = 10.0
 GRID_MIN_PROOF_STARTS = 30
 GRID_MIN_REALISTIC_FEE_PCT = 0.25
 LOOP_MIN_PROOF_TRADES = 4
-LOOP_MIN_PROOF_WIN_RATE_PCT = 70.0
+LOOP_MIN_PROOF_WIN_RATE_PCT = 65.0
 LOOP_MIN_MONTHLY_PER_1K = 10.0
-LOOP_PROOF_MODEL = "total-pnl-bull-v1"
+LOOP_PROOF_MODEL = "adaptive-proof-v1"
 
 
 @dataclass(frozen=True)
@@ -127,7 +127,11 @@ def _loop_opportunity(row: dict[str, Any], proof_by_symbol: dict[str, dict[str, 
         historical_starts=_optional_int(proof_row.get("trades")),
         label=_proof_label(proof_row.get("status"), proof_row.get("trades")),
     )
-    proof_matches_current = str(proof_row.get("target_model", "")).lower() == LOOP_PROOF_MODEL
+    proof_matches_current = (
+        str(proof_row.get("target_model", "")).lower() == LOOP_PROOF_MODEL
+        and str(proof_row.get("status", "")).lower() == "proven"
+        and _loop_proof_settings_match(row, proof_row.get("settings") or {})
+    )
     debug["proof_matches_current_strategy"] = proof_matches_current
     status = _practical_loop_status(debug, proof, proof_matches_current=proof_matches_current)
     reason = _practical_reason(status, debug, strategy="LOOP")
@@ -321,6 +325,8 @@ def _grid_debug(row: dict[str, Any], score: int) -> dict[str, Any]:
         "historical_train_avg_return_pct": _optional_float(row.get("historical_train_avg_return_pct")),
         "historical_test_avg_return_pct": _optional_float(row.get("historical_test_avg_return_pct")),
         "historical_non_overlapping": bool(row.get("historical_non_overlapping")),
+        "adaptive_proof_model": str(row.get("adaptive_proof_model", "")),
+        "adaptive_proof_status": str(row.get("adaptive_proof_status", "")),
         "take_profit_pct": _optional_float(row.get("take_profit_pct")),
         "stop_loss_pct": _optional_float(row.get("stop_loss_pct")),
     }
@@ -373,6 +379,8 @@ def _practical_grid_status(debug: dict[str, Any]) -> OpportunityStatus:
         and monthly_return >= 10.0
         and 0.0 < worst_drawdown <= GRID_MAX_WORST_DRAWDOWN_PCT
         and _grid_has_current_proof(debug)
+        and debug.get("adaptive_proof_model") == LOOP_PROOF_MODEL
+        and debug.get("adaptive_proof_status") == "Proven"
     )
     risk_settings_ok = 8.0 <= take_profit_pct <= 12.0 and 5.0 <= stop_loss_pct <= 7.0
     if score >= GRID_READY_SCORE and has_proof and risk_settings_ok:
@@ -522,6 +530,26 @@ def _proof_label(status: Any, starts: Any) -> str:
     if "legacy" in raw:
         return "legacy proof"
     return "proven"
+
+
+def _loop_proof_settings_match(row: dict[str, Any], settings: dict[str, Any]) -> bool:
+    pairs = (
+        (row.get("timeframe"), settings.get("timeframe")),
+        (row.get("order_distance_pct"), settings.get("order_distance_pct")),
+        (row.get("order_count"), settings.get("order_count")),
+        (row.get("take_profit_pct"), settings.get("take_profit_pct")),
+        (row.get("monitored_stop_loss_pct"), settings.get("stop_loss_pct")),
+    )
+    for live, proven in pairs:
+        if str(live) == str(proven):
+            continue
+        try:
+            if abs(float(live) - float(proven)) <= 0.0001:
+                continue
+        except (TypeError, ValueError):
+            pass
+        return False
+    return True
 
 
 def _status_rank(status: str) -> int:

@@ -285,6 +285,9 @@ status_report:
   timezone: America/Los_Angeles
   state_file: data/status_report_state.json
 
+adaptive_proof:
+  history_exchange: okx
+
 pairs:
   - ETH/USDT
   - DOGE/USDT

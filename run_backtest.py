@@ -380,8 +380,22 @@ def run_backtest(
     timeframe: str | None = None,
     order_count: int | None = None,
     symbols: list[str] | None = None,
+    take_profit_pct: float | None = None,
+    monitored_stop_loss_pct: float | None = None,
+    include_portfolio: bool = True,
+    range_lookback_bars: int | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     config = apply_preset(load_public_config(), preset)
+    if take_profit_pct is not None:
+        config["loop_settings"]["normal_take_profit_min_pct"] = float(take_profit_pct)
+        config["loop_settings"]["normal_take_profit_max_pct"] = float(take_profit_pct)
+        config["loop_settings"]["momentum_take_profit_min_pct"] = float(take_profit_pct)
+        config["loop_settings"]["momentum_take_profit_max_pct"] = float(take_profit_pct)
+    if monitored_stop_loss_pct is not None:
+        config["loop_settings"]["monitored_stop_loss_min_pct"] = float(monitored_stop_loss_pct)
+        config["loop_settings"]["monitored_stop_loss_max_pct"] = float(monitored_stop_loss_pct)
+    if range_lookback_bars is not None:
+        config["strategy"]["range_lookback_bars"] = max(int(range_lookback_bars), 12)
     config["exchange"]["id"] = exchange_id
     if timeframe:
         config["exchange"]["timeframe"] = timeframe
@@ -612,14 +626,15 @@ def run_backtest(
         mode_result["net_return_pct"] = round(mode_result["net_return_pct"], 2)
         mode_result["grid_net_return_pct"] = round(mode_result["grid_net_return_pct"], 2)
     summary["mode_results"] = mode_results
-    balance_summary = simulate_portfolio(
-        candles_by_symbol=candles_by_symbol,
-        strategies=strategies,
-        fee_pct=fee_pct,
-        starting_balance=starting_balance,
-        trade_size=fixed_trade_size,
-    )
-    summary.update(balance_summary)
+    if include_portfolio:
+        balance_summary = simulate_portfolio(
+            candles_by_symbol=candles_by_symbol,
+            strategies=strategies,
+            fee_pct=fee_pct,
+            starting_balance=starting_balance,
+            trade_size=fixed_trade_size,
+        )
+        summary.update(balance_summary)
     summary["allocation"] = build_allocation_plan(
         results=results,
         starting_balance=starting_balance,
@@ -717,7 +732,7 @@ def _analyze_entry_fast(
     current_index: int,
     prepared_strategies: list[PreparedStrategy],
 ) -> tuple[str, Signal]:
-    raw_window = candles.iloc[: current_index + 1].reset_index(drop=True)
+    raw_window = candles.iloc[: current_index + 1]
     entry_candidates: list[tuple[str, Signal]] = []
     for mode, strategy, indicator_frame, positions in prepared_strategies:
         prepared_index = positions.get(current_index)
@@ -1075,6 +1090,9 @@ def run_loop_optimizer(
     timeframe: str | None = None,
     order_count: int | None = None,
     symbols: list[str] | None = None,
+    take_profit_pct: float | None = None,
+    monitored_stop_loss_pct: float | None = None,
+    range_lookback_bars: int | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     best_by_symbol: dict[str, dict[str, Any]] = {}
     distance_summaries: list[dict[str, Any]] = []
@@ -1096,14 +1114,18 @@ def run_loop_optimizer(
             timeframe=timeframe,
             order_count=order_count,
             symbols=symbols,
+            take_profit_pct=take_profit_pct,
+            monitored_stop_loss_pct=monitored_stop_loss_pct,
+            include_portfolio=False,
+            range_lookback_bars=range_lookback_bars,
         )
         distance_summaries.append(
             {
                 "distance": distance,
                 "trades": summary["trades"],
                 "win_rate_pct": summary["win_rate_pct"],
-                "portfolio_return_pct": summary["portfolio_return_pct"],
-                "max_drawdown_pct": summary["max_drawdown_pct"],
+                "portfolio_return_pct": summary.get("portfolio_return_pct", summary.get("net_return_pct", 0.0)),
+                "max_drawdown_pct": summary.get("max_drawdown_pct", 0.0),
                 "estimated_monthly_profit": summary["allocation"]["estimated_monthly_profit"],
             }
         )
@@ -1287,6 +1309,9 @@ def main() -> None:
     parser.add_argument("--all-usdt-pairs", action="store_true", help="Discover and test liquid spot USDT pairs from the live exchange.")
     parser.add_argument("--max-pairs", type=int, default=None, help="Maximum discovered USDT pairs to test.")
     parser.add_argument("--order-count", type=int, default=None, help="Override LOOP order count. Bitsgap-style valid range is 10-40 even numbers.")
+    parser.add_argument("--take-profit-pct", type=float, default=None, help="Research-only fixed Total PnL target percentage.")
+    parser.add_argument("--monitored-stop-loss-pct", type=float, default=None, help="Research-only fixed monitored protection percentage.")
+    parser.add_argument("--range-lookback-bars", type=int, default=None, help="Research-only range lookback sized for the tested timeframe.")
     parser.add_argument(
         "--loop-distances",
         default=None,
@@ -1327,6 +1352,9 @@ def main() -> None:
             timeframe=args.timeframe,
             order_count=args.order_count,
             symbols=symbols or None,
+            take_profit_pct=args.take_profit_pct,
+            monitored_stop_loss_pct=args.monitored_stop_loss_pct,
+            range_lookback_bars=args.range_lookback_bars,
         )
         print("OPTIMIZER_SUMMARY")
         for key, value in summary.items():
@@ -1371,6 +1399,9 @@ def main() -> None:
         timeframe=args.timeframe,
         order_count=args.order_count,
         symbols=symbols or None,
+        take_profit_pct=args.take_profit_pct,
+        monitored_stop_loss_pct=args.monitored_stop_loss_pct,
+        range_lookback_bars=args.range_lookback_bars,
     )
     print("SUMMARY")
     for key, value in summary.items():

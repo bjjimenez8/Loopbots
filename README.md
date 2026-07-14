@@ -227,6 +227,16 @@ The backtester currently simulates entries, take-profit exits, and safety exits 
 
 `run_backtest.py` also estimates LOOP-style grid cycles while an alert is active. It reports the normal entry-to-exit return separately from estimated grid profit, so you can compare a simple trade result against a more Bitsgap-like LOOP result.
 
+### Adaptive historical proof
+
+Build the versioned proof registry from the cached two-year hourly history with:
+
+```powershell
+python adaptive_proof.py
+```
+
+The builder selects settings on the first half of each coin's history and checks them on the untouched second half using non-overlapping starts and realistic fee assumptions. A live GRID or LOOP setup is never marked Ready unless its exact symbol, timeframe, distances, order count, target, and stop match a `Proven` registry row. Missing, malformed, weak, or stale proof fails closed. Historical proof is evidence of a past edge, not a guarantee of future profit.
+
 For exchange-based history testing, `run_backtest.py` supports splitting the live universe from the history source. That means you can keep `Kraken` as the real trading exchange while using deeper public candles from another exchange such as `OKX`:
 
 ```bash
