@@ -133,11 +133,12 @@ def _loop_opportunity(row: dict[str, Any], proof_by_symbol: dict[str, dict[str, 
     reason = _practical_reason(status, debug, strategy="LOOP")
     take_profit_mode = str(row.get("take_profit_mode", "price")).lower()
     take_profit_pct = _optional_float(row.get("take_profit_pct"))
+    take_profit_price = _optional_float(row.get("take_profit_price"))
     monitored_stop_pct = _optional_float(row.get("monitored_stop_loss_pct"))
     take_profit_text = (
-        f"Total PnL +{take_profit_pct:g}%"
+        _total_pnl_target_text(take_profit_pct, take_profit_price)
         if take_profit_mode == "total_pnl" and take_profit_pct is not None
-        else _price_or_note(row.get("take_profit_price"), "When strategy target is reached")
+        else _price_or_note(take_profit_price, "When strategy target is reached")
     )
     stop_loss_text = _price_or_note(row.get("safety_exit_price"), "Stop if monitored stop triggers")
     if monitored_stop_pct is not None:
@@ -567,6 +568,13 @@ def _price_or_note(value: Any, note: str) -> str:
     if number is None or number <= 0:
         return note
     return _format_price(number)
+
+
+def _total_pnl_target_text(target_pct: float, reference_price: float | None) -> str:
+    target = f"Total PnL +{target_pct:g}%"
+    if reference_price is None or reference_price <= 0:
+        return target
+    return f"{target} (approx. coin price {_format_price(reference_price)})"
 
 
 def _format_price(value: float) -> str:
