@@ -31,6 +31,8 @@ class LoopOnlyDashboardTests(unittest.TestCase):
         self.assertNotIn("GRID Bots", html)
         self.assertNotIn("OLD/USDT", html)
         self.assertIn("LOOP Bots Ready Now", html)
+        self.assertIn('navigation.type === "reload"', html)
+        self.assertIn('document.getElementById("loop-ready")', html)
         self.assertIn("LOOP Bot Paper Trading", html)
 
 

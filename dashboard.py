@@ -885,9 +885,15 @@ def _render_ready_right_now_dashboard(snapshot: dict[str, Any], payload: dict[st
     }}
     updateLiveClock();
     setInterval(updateLiveClock, 1000);
-    if (!window.location.hash) {{
-      window.scrollTo(0, 0);
+    var navigation = performance.getEntriesByType("navigation")[0];
+    var refreshed = navigation && navigation.type === "reload";
+    if (refreshed || !window.location.hash) {{
       if ("scrollRestoration" in history) history.scrollRestoration = "manual";
+      history.replaceState(null, "", window.location.pathname + window.location.search + "#loop-ready");
+      requestAnimationFrame(function () {{
+        var loopReady = document.getElementById("loop-ready");
+        if (loopReady) loopReady.scrollIntoView({{ block: "start" }});
+      }});
     }}
   </script>
   {_browser_timezone_script()}
