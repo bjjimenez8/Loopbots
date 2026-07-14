@@ -1295,8 +1295,11 @@ def _parse_time(value: Any) -> datetime | None:
 
 
 def _loop_stop_loss_text(entry: Any, safety: Any) -> str:
+    safety_text = str(safety or "").strip()
+    if "%" in safety_text and " at " in safety_text.lower():
+        return safety_text
     entry_price = _first_number(entry)
-    safety_price = _first_number(safety)
+    safety_price = _number_after_at(safety_text) or _first_number(safety_text)
     if entry_price and safety_price and entry_price > 0:
         return f"{((entry_price - safety_price) / entry_price) * 100:.2f}% at {_fmt_active_price(safety_price)}"
     return "Use stop loss"
@@ -1307,11 +1310,26 @@ def _loop_stop_loss_value(fields: dict[str, Any]) -> Any:
 
 
 def _loop_take_profit_text(entry: Any, take_profit: Any) -> str:
+    take_profit_text = str(take_profit or "").strip()
+    if "total pnl" in take_profit_text.lower():
+        return take_profit_text
     entry_price = _first_number(entry)
-    take_profit_price = _first_number(take_profit)
+    take_profit_price = _number_after_at(take_profit_text) or _first_number(take_profit_text)
     if entry_price and take_profit_price and entry_price > 0:
         return f"+{((take_profit_price / entry_price) - 1) * 100:.2f}% at {_fmt_active_price(take_profit_price)}"
-    return str(take_profit or "n/a")
+    return take_profit_text or "n/a"
+
+
+def _number_after_at(value: Any) -> float | None:
+    import re
+
+    match = re.search(r"\bat\s+(-?\d[\d,]*(?:\.\d+)?)", str(value or ""), flags=re.IGNORECASE)
+    if not match:
+        return None
+    try:
+        return float(match.group(1).replace(",", ""))
+    except ValueError:
+        return None
 
 
 def _first_number(value: Any) -> float | None:
